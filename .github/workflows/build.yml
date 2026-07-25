@@ -43,6 +43,10 @@ jobs:
         working-directory: ${{ runner.temp }}/source
         run: echo 'ac_add_options --enable-project=comm/mail' > mozconfig
 
+      - name: Vendor Rust dependencies
+        working-directory: ${{ runner.temp }}/source
+        run: python3 mach tb-rust vendor
+
       - name: Show disk space before build
         run: df -h
 
