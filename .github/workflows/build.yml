@@ -1,0 +1,53 @@
+name: Build Top Dogs Mail (unbranded proof-of-concept)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Show available disk space
+        run: df -h
+
+      - name: Install base prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip git curl
+
+      - name: Bootstrap Thunderbird source (comm-central)
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p tb-src
+          cd tb-src
+          curl -sO https://raw.githubusercontent.com/mozilla-firefox/firefox/main/python/mozboot/bin/bootstrap.py
+          python3 bootstrap.py --application-choice=comm --no-interactive --vcs=git
+
+      - name: Write mozconfig for Thunderbird (comm/mail)
+        working-directory: ${{ runner.temp }}
+        run: |
+          find . -maxdepth 2 -type d
+          echo 'ac_add_options --enable-project=comm/mail' > mozconfig || true
+
+      - name: Show final disk space
+        run: df -h
+
+      - name: Build (mach build)
+        working-directory: ${{ runner.temp }}
+        run: |
+          find . -maxdepth 2 -iname 'mach'
