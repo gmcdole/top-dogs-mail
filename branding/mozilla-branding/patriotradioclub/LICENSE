@@ -1,0 +1,19 @@
+Top Dogs Mail — Patriot Radio Club branding package
+
+This directory contains customized branding assets (icons, wordmark, brand
+strings, and related build glue files) created by Top Dogs Development for
+the Patriot Radio Club edition of Top Dogs Mail.
+
+Top Dogs Mail is built on Mozilla Thunderbird. Thunderbird and its original
+source code are Copyright Mozilla Foundation and contributors, licensed
+under the Mozilla Public License 2.0 (see the LICENSE file at the root of
+this repository).
+
+The contents of this branding directory (logos, icons, wordmark, and brand
+strings) are original works created by Top Dogs Development and are not
+part of Mozilla's original Thunderbird branding. These files are licensed
+under the same Mozilla Public License 2.0 as the rest of this repository,
+consistent with the file-level headers included in each source file here.
+
+Top Dogs Mail is an independent product of Top Dogs Development and is not
+produced, endorsed, or supported by Mozilla.
