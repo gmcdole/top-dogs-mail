@@ -1,0 +1,62 @@
+name: Build Top Dogs Mail (Patriot Radio Club branded)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Install base prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip git curl
+
+      - name: Clone Firefox source (build platform)
+        working-directory: ${{ runner.temp }}
+        run: git clone --depth 1 https://github.com/mozilla-firefox/firefox.git source
+
+      - name: Clone Thunderbird source into comm/
+        working-directory: ${{ runner.temp }}/source
+        run: git clone --depth 1 https://github.com/thunderbird/thunderbird-desktop.git comm
+
+      - name: Copy Patriot Radio Club branding into place
+        run: |
+          mkdir -p ${{ runner.temp }}/source/comm/mail/branding/patriotradioclub
+          cp -r branding/mozilla-branding/patriotradioclub/. ${{ runner.temp }}/source/comm/mail/branding/patriotradioclub/
+
+      - name: Bootstrap build environment
+        working-directory: ${{ runner.temp }}/source
+        run: python3 mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Write mozconfig for Thunderbird (comm/mail) with Patriot Radio Club branding
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          echo 'ac_add_options --enable-project=comm/mail' > mozconfig
+          echo 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub' >> mozconfig
+
+      - name: Vendor Rust dependencies
+        working-directory: ${{ runner.temp }}/source
+        run: python3 mach tb-rust vendor
+
+      - name: Show disk space before build
+        run: df -h
+
+      - name: Build (mach build)
+        working-directory: ${{ runner.temp }}/source
+        run: python3 mach build
