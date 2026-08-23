@@ -1,14 +1,35 @@
-name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
+ï»¿name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
 
 # Windows build. Run #1 (2026-08-22) failed at "Bootstrap build environment"
 # after 32s: mach requires Mozilla's own MozillaBuild toolchain pre-installed
-# at C:\mozilla-build before it will run at all on Windows — it does not
+# at C:\mozilla-build before it will run at all on Windows - it does not
 # install that piece itself. Fixed by adding the "Install MozillaBuild"
 # step below (via Chocolatey, which windows-latest runners already have),
 # installing silently to the default path mach expects.
 #
+# Run #2 failed on a missing thunderbird.VisualElementsManifest.xml (Windows
+# Start-tile manifest) - fixed by adding it plus two PNGs to the branding
+# folder, matching Mozilla's own stock layout.
+#
+# Runs #3 and #4 both cleared bootstrap/clone/vendor and got deep into the
+# actual compile (2h20m in both times) before failing at the exact same
+# target: toolkit/crashreporter/crash_helper_server/crash_helper_server.lib.
+# The Rust crate itself compiles fine; the failure is silent - no compiler
+# or linker error text at all, even with mach build -v, and even in the
+# full untruncated raw log (GitHub's in-browser log view truncates very
+# large steps, which -v made worse, but the raw log confirmed there is
+# genuinely nothing printed before the mozmake cascade). See
+# Top-Dogs-Mail-Project-Reference.md for full detail on both failures and
+# what's been verified so far (Mozilla's own moz.build for that target).
+#
+# This run's change: redirect the mach build step's full output to a log
+# file (via cmd, not PowerShell's native 2>&1 which can wrap external
+# stderr oddly), then always print the tail and upload the complete file
+# as an artifact - so we have a real, complete record of what happened
+# even if it fails again, instead of relying on GitHub's log viewer.
+#
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
-# disk space — windows-latest runners have a similar free-space constraint
+# disk space - windows-latest runners have a similar free-space constraint
 # to the Linux runners did before their cleanup step, and there's no direct
 # Windows equivalent of the free-disk-space action used there. If a future
 # run fails on disk space, that's the next thing to address.
@@ -70,7 +91,27 @@ jobs:
 
       - name: Build (mach build)
         working-directory: ${{ runner.temp }}/source
-        run: python mach build -v
+        shell: cmd
+        run: python mach build -v > "%RUNNER_TEMP%\mach-build-full.log" 2>&1
+
+      - name: Show tail of build log
+        if: always()
+        run: |
+          $log = "${{ runner.temp }}\mach-build-full.log"
+          if (Test-Path $log) {
+            Write-Host "----- Last 200 lines of mach build log -----"
+            Get-Content $log -Tail 200
+          } else {
+            Write-Host "No build log found at $log"
+          }
+
+      - name: Upload full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: top-dogs-mail-patriotradioclub-windows-build-log
+          path: ${{ runner.temp }}/mach-build-full.log
+          retention-days: 14
 
       - name: Package installer (mach build installer)
         working-directory: ${{ runner.temp }}/source
@@ -85,7 +126,7 @@ jobs:
             $installer = Get-ChildItem -Recurse -Path obj-*\dist -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $installer) {
-            Write-Error "No installer .exe found under obj-*/dist — packaging step likely did not produce the expected output. Check the 'Package installer' step log."
+            Write-Error "No installer .exe found under obj-*/dist - packaging step likely did not produce the expected output. Check the 'Package installer' step log."
             exit 1
           }
           Write-Host "Found installer: $($installer.FullName)"
