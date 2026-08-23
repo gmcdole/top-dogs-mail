@@ -1,5 +1,18 @@
 ﻿name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
 
+# Windows build. Run #1 (2026-08-22) failed at "Bootstrap build environment"
+# after 32s: mach requires Mozilla's own MozillaBuild toolchain pre-installed
+# at C:\mozilla-build before it will run at all on Windows — it does not
+# install that piece itself. Fixed by adding the "Install MozillaBuild"
+# step below (via Chocolatey, which windows-latest runners already have),
+# installing silently to the default path mach expects.
+#
+# Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
+# disk space — windows-latest runners have a similar free-space constraint
+# to the Linux runners did before their cleanup step, and there's no direct
+# Windows equivalent of the free-disk-space action used there. If a future
+# run fails on disk space, that's the next thing to address.
+
 on:
   workflow_dispatch:
 
@@ -21,6 +34,9 @@ jobs:
         run: |
           python --version
           git --version
+
+      - name: Install MozillaBuild (required by mach on Windows)
+        run: choco install mozillabuild -y
 
       - name: Clone Firefox source (build platform)
         working-directory: ${{ runner.temp }}
