@@ -13,26 +13,53 @@
 #
 # Runs #3 and #4 both cleared bootstrap/clone/vendor and got deep into the
 # actual compile (2h20m in both times) before failing at the exact same
-# target: toolkit/crashreporter/crash_helper_server/crash_helper_server.lib.
-# The Rust crate itself compiles fine; the failure is silent - no compiler
-# or linker error text at all, even with mach build -v, and even in the
-# full untruncated raw log (GitHub's in-browser log view truncates very
-# large steps, which -v made worse, but the raw log confirmed there is
-# genuinely nothing printed before the mozmake cascade). See
-# Top-Dogs-Mail-Project-Reference.md for full detail on both failures and
-# what's been verified so far (Mozilla's own moz.build for that target).
+# target: toolkit/crashreporter/crash_helper_server/crash_helper_server.lib,
+# with mozmake reporting "Error 2" and no compiler/linker text at all, even
+# with mach build -v and even in the full untruncated raw log.
 #
-# This run's change: redirect the mach build step's full output to a log
-# file (via cmd, not PowerShell's native 2>&1 which can wrap external
-# stderr oddly), then always print the tail and upload the complete file
-# as an artifact - so we have a real, complete record of what happened
-# even if it fails again, instead of relying on GitHub's log viewer.
+# Run #5 added full-output-to-file capture (mach-build-full.log, uploaded as
+# an artifact) so the complete log could be searched directly rather than
+# relying on GitHub's log viewer, which truncates very large steps. That run
+# got further (past crash_helper_server) and failed later, at a DIFFERENT
+# target (toolkit/crashreporter/mozwer-rust/mozwer_s.lib) with the exact same
+# signature: the Rust crate itself finishes successfully ("Finished release
+# profile...") and then mozmake immediately reports "Error 2" up the
+# recurse.mk/rules.mk/client.mk chain with zero diagnostic text anywhere in
+# the 24MB/49000-line full log - confirmed by exhaustive grep for every
+# realistic error pattern (error C####, error[E####], fatal error, LINK
+# fatal, lld-link error, undefined symbol, etc), all with zero matches.
+#
+# The failure point moving between runs (different target each time, always
+# near the very end of the build, always with no diagnostic text at all)
+# rules out a specific source-code bug - a real compile error reproduces at
+# the same spot every time. It points instead to an environment-level issue:
+# a process being silently killed rather than failing on its own. The two
+# most likely candidates are (a) the runner running out of memory during the
+# "link storm" phase near the end of the build, where many linker processes
+# run close together, or (b) antivirus/Defender interference with freshly
+# built crash-reporter-related binaries (their names and low-level behavior
+# can resemble what AV heuristics flag). Per this project's standing
+# discipline, neither is being treated as confirmed - this run adds direct
+# measurement instead of guessing:
+#   - "Report machine specs" (new) prints actual CPU count and total RAM for
+#     this specific runner, since GitHub's public-repo windows-latest spec
+#     (4 vCPU / 16GB RAM, confirmed via GitHub's own docs since this repo is
+#     public) should be more headroom than the private-repo tier, but has
+#     not been directly confirmed for our own runs.
+#   - "Start memory monitor" / "Stop memory monitor and show summary" (new)
+#     run a lightweight background job that samples free/total physical
+#     memory every 10 seconds for the full duration of the build step and
+#     saves it to a log file, uploaded alongside the build log. If free
+#     memory drops toward zero right around the failure timestamp, that
+#     directly confirms OOM without guessing. If memory stays healthy
+#     throughout, OOM is ruled out and the next step is investigating AV
+#     interference instead.
+# No build behavior is being changed this run (no -j change, nothing else)
+# specifically so this stays a clean, isolated diagnostic.
 #
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
-# disk space - windows-latest runners have a similar free-space constraint
-# to the Linux runners did before their cleanup step, and there's no direct
-# Windows equivalent of the free-disk-space action used there. If a future
-# run fails on disk space, that's the next thing to address.
+# disk space - checked and currently fine (140GB+ free on the D: drive where
+# the build lives, confirmed via the disk space steps below).
 
 on:
   workflow_dispatch:
@@ -47,6 +74,11 @@ jobs:
     steps:
       - name: Check out this repo
         uses: actions/checkout@v4
+
+      - name: Report machine specs
+        run: |
+          Get-CimInstance Win32_ComputerSystem | Select-Object Name, NumberOfProcessors, NumberOfLogicalProcessors, TotalPhysicalMemory
+          Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize, FreePhysicalMemory
 
       - name: Report starting disk space
         run: Get-PSDrive -PSProvider FileSystem
@@ -89,10 +121,41 @@ jobs:
       - name: Report disk space before build
         run: Get-PSDrive -PSProvider FileSystem
 
+      - name: Start memory monitor
+        run: |
+          $job = Start-Job -ScriptBlock {
+            while ($true) {
+              $os = Get-CimInstance Win32_OperatingSystem
+              $freeMB = [math]::Round($os.FreePhysicalMemory / 1024, 0)
+              $totalMB = [math]::Round($os.TotalVisibleMemorySize / 1024, 0)
+              $line = "{0} FreeMB={1} TotalMB={2}" -f (Get-Date -Format "HH:mm:ss"), $freeMB, $totalMB
+              Add-Content -Path "$env:RUNNER_TEMP\mem-monitor.log" -Value $line
+              Start-Sleep -Seconds 10
+            }
+          }
+          Set-Content -Path "$env:RUNNER_TEMP\mem-monitor-job-id.txt" -Value $job.Id
+
       - name: Build (mach build)
         working-directory: ${{ runner.temp }}/source
         shell: cmd
         run: python mach build -v > "%RUNNER_TEMP%\mach-build-full.log" 2>&1
+
+      - name: Stop memory monitor and show summary
+        if: always()
+        run: |
+          $jobIdFile = "$env:RUNNER_TEMP\mem-monitor-job-id.txt"
+          if (Test-Path $jobIdFile) {
+            $jobId = Get-Content $jobIdFile
+            Stop-Job -Id $jobId -ErrorAction SilentlyContinue
+            Remove-Job -Id $jobId -ErrorAction SilentlyContinue
+          }
+          $memLog = "$env:RUNNER_TEMP\mem-monitor.log"
+          if (Test-Path $memLog) {
+            Write-Host "----- Last 40 memory samples (most recent last) -----"
+            Get-Content $memLog -Tail 40
+          } else {
+            Write-Host "No memory monitor log found at $memLog"
+          }
 
       - name: Show tail of build log
         if: always()
@@ -105,12 +168,14 @@ jobs:
             Write-Host "No build log found at $log"
           }
 
-      - name: Upload full build log
+      - name: Upload full build log and memory monitor log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: top-dogs-mail-patriotradioclub-windows-build-log
-          path: ${{ runner.temp }}/mach-build-full.log
+          path: |
+            ${{ runner.temp }}/mach-build-full.log
+            ${{ runner.temp }}/mem-monitor.log
           retention-days: 14
 
       - name: Package installer (mach build installer)
