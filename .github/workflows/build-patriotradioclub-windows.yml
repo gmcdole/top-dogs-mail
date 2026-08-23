@@ -29,33 +29,30 @@
 # realistic error pattern (error C####, error[E####], fatal error, LINK
 # fatal, lld-link error, undefined symbol, etc), all with zero matches.
 #
-# The failure point moving between runs (different target each time, always
-# near the very end of the build, always with no diagnostic text at all)
-# rules out a specific source-code bug - a real compile error reproduces at
-# the same spot every time. It points instead to an environment-level issue:
-# a process being silently killed rather than failing on its own. The two
-# most likely candidates are (a) the runner running out of memory during the
-# "link storm" phase near the end of the build, where many linker processes
-# run close together, or (b) antivirus/Defender interference with freshly
-# built crash-reporter-related binaries (their names and low-level behavior
-# can resemble what AV heuristics flag). Per this project's standing
-# discipline, neither is being treated as confirmed - this run adds direct
-# measurement instead of guessing:
-#   - "Report machine specs" (new) prints actual CPU count and total RAM for
-#     this specific runner, since GitHub's public-repo windows-latest spec
-#     (4 vCPU / 16GB RAM, confirmed via GitHub's own docs since this repo is
-#     public) should be more headroom than the private-repo tier, but has
-#     not been directly confirmed for our own runs.
-#   - "Start memory monitor" / "Stop memory monitor and show summary" (new)
-#     run a lightweight background job that samples free/total physical
-#     memory every 10 seconds for the full duration of the build step and
-#     saves it to a log file, uploaded alongside the build log. If free
-#     memory drops toward zero right around the failure timestamp, that
-#     directly confirms OOM without guessing. If memory stays healthy
-#     throughout, OOM is ruled out and the next step is investigating AV
-#     interference instead.
-# No build behavior is being changed this run (no -j change, nothing else)
-# specifically so this stays a clean, isolated diagnostic.
+# Run #6 added a "Report machine specs" step (confirmed this repo's public
+# windows-latest runner really does get 4 vCPU / 16GB RAM, matching GitHub's
+# documented spec) and a memory-monitor background job meant to sample free
+# RAM every 10s during the build, to directly test the leading OOM
+# hypothesis. Run #6 failed again with the identical silent-Error-2
+# signature (back at crash_helper_server.lib this time), but the memory
+# monitor itself produced NO data at all - it was implemented as two
+# separate steps ("Start memory monitor" / "Stop memory monitor and show
+# summary"), and PowerShell's Start-Job creates its background job as a
+# child process of the CURRENT STEP's shell. GitHub Actions runners have a
+# documented process-cleanup mechanism (confirmed via a primary source -
+# github.com/actions/runner issue #598, "Disable process cleanup" - which
+# describes the runner terminating child/background processes once a step
+# completes) that killed the job before it ever wrote a single sample. This
+# was a bug in the diagnostic's own implementation, not evidence about the
+# build - it means run #6 could not actually confirm or rule out OOM.
+#
+# Run #7's fix: merge the memory-monitor job and the mach build invocation
+# into ONE step, so the background job lives inside the same shell process
+# for the entire build duration instead of being torn down at a step
+# boundary. The build's own command (cmd /c '... > file 2>&1', chosen
+# originally to avoid PowerShell's native 2>&1 wrapping external stderr in
+# ErrorRecord objects) is unchanged, just invoked via & from inside the
+# merged pwsh step. No other build behavior is changed this run.
 #
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
 # disk space - checked and currently fine (140GB+ free on the D: drive where
@@ -121,40 +118,39 @@ jobs:
       - name: Report disk space before build
         run: Get-PSDrive -PSProvider FileSystem
 
-      - name: Start memory monitor
+      - name: Build (mach build) with memory monitoring
+        working-directory: ${{ runner.temp }}/source
         run: |
+          $memLog = "$env:RUNNER_TEMP\mem-monitor.log"
           $job = Start-Job -ScriptBlock {
+            param($logPath)
             while ($true) {
               $os = Get-CimInstance Win32_OperatingSystem
               $freeMB = [math]::Round($os.FreePhysicalMemory / 1024, 0)
               $totalMB = [math]::Round($os.TotalVisibleMemorySize / 1024, 0)
               $line = "{0} FreeMB={1} TotalMB={2}" -f (Get-Date -Format "HH:mm:ss"), $freeMB, $totalMB
-              Add-Content -Path "$env:RUNNER_TEMP\mem-monitor.log" -Value $line
+              Add-Content -Path $logPath -Value $line
               Start-Sleep -Seconds 10
             }
-          }
-          Set-Content -Path "$env:RUNNER_TEMP\mem-monitor-job-id.txt" -Value $job.Id
+          } -ArgumentList $memLog
 
-      - name: Build (mach build)
-        working-directory: ${{ runner.temp }}/source
-        shell: cmd
-        run: python mach build -v > "%RUNNER_TEMP%\mach-build-full.log" 2>&1
+          & cmd /c 'python mach build -v > "%RUNNER_TEMP%\mach-build-full.log" 2>&1'
+          $buildExitCode = $LASTEXITCODE
 
-      - name: Stop memory monitor and show summary
-        if: always()
-        run: |
-          $jobIdFile = "$env:RUNNER_TEMP\mem-monitor-job-id.txt"
-          if (Test-Path $jobIdFile) {
-            $jobId = Get-Content $jobIdFile
-            Stop-Job -Id $jobId -ErrorAction SilentlyContinue
-            Remove-Job -Id $jobId -ErrorAction SilentlyContinue
-          }
-          $memLog = "$env:RUNNER_TEMP\mem-monitor.log"
+          Stop-Job -Job $job -ErrorAction SilentlyContinue
+          Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null
+          Remove-Job -Job $job -ErrorAction SilentlyContinue
+
+          Write-Host "----- Last 40 memory samples (most recent last) -----"
           if (Test-Path $memLog) {
-            Write-Host "----- Last 40 memory samples (most recent last) -----"
             Get-Content $memLog -Tail 40
           } else {
             Write-Host "No memory monitor log found at $memLog"
+          }
+
+          if ($buildExitCode -ne 0) {
+            Write-Host "mach build failed with exit code $buildExitCode"
+            exit $buildExitCode
           }
 
       - name: Show tail of build log
