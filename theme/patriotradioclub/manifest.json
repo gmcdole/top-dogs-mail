@@ -1,0 +1,62 @@
+{
+  "manifest_version": 2,
+  "name": "Top Dogs Mail — Patriot Radio Club Theme",
+  "description": "Default toolbar/window theme for the Patriot Radio Club build of Top Dogs Mail. Built from the approved branding palette (see branding/patriot-radio-club/palette-and-assets.md): Old Glory Blue #3C3B6E, Old Glory Red #B22234, Accent Gold #E5C200, White #FFFFFF.",
+  "version": "1.0",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "patriotradioclub-theme@topdogs.dev",
+      "strict_min_version": "128.0"
+    }
+  },
+  "theme": {
+    "colors": {
+      "header_area": "#3C3B6E",
+      "header_area_inactive": "#6B6A95",
+
+      "toolbar": "#3C3B6E",
+      "toolbar_text": "#FFFFFF",
+      "icons": "#FFFFFF",
+      "icons_attention": "#B22234",
+
+      "toolbar_top_separator": "#E5C200",
+      "toolbar_bottom_separator": "#E5C200",
+      "toolbar_vertical_separator": "#5453A0",
+
+      "button_background_hover": "#4B4A82",
+      "button_background_active": "#2E2D58",
+
+      "toolbar_field": "#FFFFFF",
+      "toolbar_field_text": "#3C3B6E",
+      "toolbar_field_border": "#5453A0",
+      "toolbar_field_focus": "#FFFFFF",
+      "toolbar_field_text_focus": "#3C3B6E",
+      "toolbar_field_border_focus": "#E5C200",
+      "toolbar_field_highlight": "#E5C200",
+      "toolbar_field_highlight_text": "#3C3B6E",
+
+      "tab_selected": "#FFFFFF",
+      "tab_selected_text": "#3C3B6E",
+      "tab_selected_line": "#E5C200",
+      "tab_text": "#FFFFFF",
+      "tab_background_separator": "#2E2D58",
+      "tab_loading": "#E5C200",
+
+      "sidebar": "#FFFFFF",
+      "sidebar_text": "#2A2822",
+      "sidebar_border": "#DDD8CC",
+      "sidebar_highlight": "#3C3B6E",
+      "sidebar_highlight_text": "#FFFFFF",
+      "sidebar_highlight_border": "#E5C200",
+
+      "popup": "#FFFFFF",
+      "popup_text": "#2A2822",
+      "popup_border": "#DDD8CC",
+      "popup_highlight": "#3C3B6E",
+      "popup_highlight_text": "#FFFFFF"
+    },
+    "properties": {
+      "color_scheme": "light"
+    }
+  }
+}

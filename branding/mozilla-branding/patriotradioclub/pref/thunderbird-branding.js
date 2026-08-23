@@ -13,3 +13,16 @@
 
 pref("app.update.url.manual", "https://topdogs.dev/mail/patriotradioclub/update");
 pref("app.update.url.details", "https://topdogs.dev/mail/patriotradioclub/update/notes");
+
+// Default toolbar/window theme for this org (approved 2026-08-23 — see
+// theme/patriotradioclub/manifest.json for the actual theme, built from
+// branding/patriot-radio-club/palette-and-assets.md).
+//
+// This pref alone does NOT install or activate the theme — it only tells
+// Thunderbird which theme ID to use as active *if* that theme is already
+// installed in the profile. Getting the theme itself installed is a
+// separate, not-yet-proven step — see theme/patriotradioclub/NOTES.md for
+// the two candidate mechanisms (policies.json force-install at packaging
+// time, or the account-setup install script dropping the .xpi into the
+// profile directly) and which is actually verified vs. still planned.
+pref("extensions.activeThemeID", "patriotradioclub-theme@topdogs.dev");

@@ -1,0 +1,83 @@
+﻿name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Report starting disk space
+        run: Get-PSDrive -PSProvider FileSystem
+
+      - name: Confirm base prerequisites are present
+        run: |
+          python --version
+          git --version
+
+      - name: Clone Firefox source (build platform)
+        working-directory: ${{ runner.temp }}
+        run: git clone --depth 1 https://github.com/mozilla-firefox/firefox.git source
+
+      - name: Clone Thunderbird source into comm/
+        working-directory: ${{ runner.temp }}/source
+        run: git clone --depth 1 https://github.com/thunderbird/thunderbird-desktop.git comm
+
+      - name: Copy Patriot Radio Club branding into place
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub" | Out-Null
+          Copy-Item -Recurse -Force -Path "branding/mozilla-branding/patriotradioclub/*" -Destination "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub/"
+
+      - name: Bootstrap build environment
+        working-directory: ${{ runner.temp }}/source
+        run: python mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Write mozconfig for Thunderbird (comm/mail) with Patriot Radio Club branding
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          Set-Content -Path mozconfig -Value 'ac_add_options --enable-project=comm/mail'
+          Add-Content -Path mozconfig -Value 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub'
+
+      - name: Vendor Rust dependencies
+        working-directory: ${{ runner.temp }}/source
+        run: python mach tb-rust vendor
+
+      - name: Report disk space before build
+        run: Get-PSDrive -PSProvider FileSystem
+
+      - name: Build (mach build)
+        working-directory: ${{ runner.temp }}/source
+        run: python mach build
+
+      - name: Package installer (mach build installer)
+        working-directory: ${{ runner.temp }}/source
+        run: python mach build installer
+
+      - name: Locate packaged installer
+        id: find_installer
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          $installer = Get-ChildItem -Recurse -Path obj-*\dist\install\sea -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $installer) {
+            $installer = Get-ChildItem -Recurse -Path obj-*\dist -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $installer) {
+            Write-Error "No installer .exe found under obj-*/dist — packaging step likely did not produce the expected output. Check the 'Package installer' step log."
+            exit 1
+          }
+          Write-Host "Found installer: $($installer.FullName)"
+          echo "installer_path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: top-dogs-mail-patriotradioclub-windows-installer
+          path: ${{ steps.find_installer.outputs.installer_path }}
+          retention-days: 14
