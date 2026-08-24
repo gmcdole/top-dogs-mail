@@ -46,13 +46,49 @@
 # was a bug in the diagnostic's own implementation, not evidence about the
 # build - it means run #6 could not actually confirm or rule out OOM.
 #
-# Run #7's fix: merge the memory-monitor job and the mach build invocation
-# into ONE step, so the background job lives inside the same shell process
-# for the entire build duration instead of being torn down at a step
-# boundary. The build's own command (cmd /c '... > file 2>&1', chosen
-# originally to avoid PowerShell's native 2>&1 wrapping external stderr in
-# ErrorRecord objects) is unchanged, just invoked via & from inside the
-# merged pwsh step. No other build behavior is changed this run.
+# Run #7 fixed the monitor (merged it into the same step as the build so it
+# survives the step-boundary process cleanup) and this time it actually
+# worked: 908 samples covering the full ~2.5 hour build. Free memory stayed
+# between 8.2GB and 12.4GB free out of 16.4GB total for the ENTIRE build,
+# never remotely close to exhaustion. This DIRECTLY RULES OUT OOM as the
+# cause - confirmed with real measurement, not assumption. Run #7 failed
+# with the identical silent-Error-2 signature yet again (mozwer_s.lib this
+# time), confirmed via the same exhaustive grep with zero matches.
+#
+# With OOM ruled out, antivirus/Defender interference was checked next -
+# also ruled out via a primary source: GitHub's own actions/runner-images
+# repo (Configure-WindowsDefender.ps1, the script that provisions every
+# windows-latest image) sets DisableRealtimeMonitoring = $true and disables
+# behavior monitoring, script scanning, network file scanning, intrusion
+# prevention, and controlled folder access by default on every windows-latest
+# runner - real-time AV scanning is already off before our workflow even
+# starts, so it cannot be interfering with the build.
+#
+# With both leading environment-level hypotheses ruled out by direct
+# evidence, the actual failure pattern was re-examined: every failure so far
+# shows the target's .lib line printed, then a bare ":" on its own line, then
+# immediately "Error 2" - with the crashes happening during a "link storm"
+# (dozens of lld-link.exe processes running within a ~48-second window) per
+# run #5's findings. A bare partial line right before an unexplained failure
+# is the classic signature of PARALLEL MAKE OUTPUT INTERLEAVING: when many
+# recipes finish near-simultaneously, GNU Make (which mozmake is built from,
+# confirmed patched from GNU Make 4.0 per Mozilla's own Bugzilla #927213)
+# can interleave their stdout/stderr line-by-line, and a genuine error
+# message from one job can end up scrambled into another job's output or
+# effectively lost from readable view. GNU Make 4.0 added --output-sync
+# specifically to solve this (confirmed via GNU Make's own manual and its
+# 4.0 release notes): with --output-sync=target, each recipe's full output
+# is buffered and printed as one uninterrupted block once that recipe
+# finishes, instead of being interleaved with other parallel recipes' output.
+# Mozilla's own Bugzilla #837846 confirms mach respects extra make flags
+# passed via MOZ_MAKE_FLAGS in mozconfig (mk_add_options MOZ_MAKE_FLAGS=...),
+# and that this reaches mozmake correctly on Windows.
+#
+# Run #8's change: add mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"
+# to mozconfig. This does not change what gets built or how - it only
+# changes how mozmake prints output, so if a real error message has been
+# getting scrambled/lost in interleaved parallel output this whole time,
+# this run should finally show it in full instead of a bare Error 2.
 #
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
 # disk space - checked and currently fine (140GB+ free on the D: drive where
@@ -110,6 +146,7 @@ jobs:
         run: |
           Set-Content -Path mozconfig -Value 'ac_add_options --enable-project=comm/mail'
           Add-Content -Path mozconfig -Value 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub'
+          Add-Content -Path mozconfig -Value 'mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"'
 
       - name: Vendor Rust dependencies
         working-directory: ${{ runner.temp }}/source
