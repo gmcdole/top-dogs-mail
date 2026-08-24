@@ -121,6 +121,35 @@
 # Event Log / WER crash capture (Get-WinEvent, Event ID 1000/1001) is the
 # next diagnostic to add.
 #
+# Run #9 failed with the identical silent Error 2 signature (back at
+# crash_helper_server.lib) - but the log revealed WHY the windows-2022 pin
+# could never have worked, not just that it didn't: the actual MSVC compiler
+# used for this build comes from C:\Users\runneradmin\.mozbuild\vs\VC\Tools\
+# MSVC\14.51.36231\... - inside mach's own toolchain cache, not the runner
+# image's system-installed Visual Studio. mach bootstrap vendors and pins
+# its own MSVC (alongside the already-known vendored clang-cl), completely
+# independent of whatever VS version ships on windows-latest vs windows-2022.
+# The VS2026-migration hypothesis is disproven with a real mechanism, not
+# just a failed retest - the variable we changed was never in the code path
+# that compiles anything.
+#
+# With OOM, Defender, output-interleaving, and now the runner image all
+# ruled out by direct evidence, and the failure's own shape (target line,
+# bare ":", zero further output, immediate Error 2) looking like an abrupt
+# process death from the start, the next diagnostic is Windows Error
+# Reporting itself. Event ID 1000 ("Application Error") is written
+# automatically to the Windows Application event log whenever any process
+# crashes, with no configuration required (confirmed via Microsoft's own
+# documentation) - it records the faulting module name, exception code
+# (e.g. 0xc0000005, an access violation), and process ID, and is readable
+# via Get-WinEvent without administrator rights.
+#
+# Run #10's change: capture the build's start time to a file, then after
+# the build step (regardless of pass/fail), query the Application event log
+# for Event ID 1000/1001 entries since that start time and both print and
+# upload whatever is found. This does not change what gets built - it only
+# adds a new place to look for the actual crash, if one is happening.
+#
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
 # disk space - checked and currently fine (140GB+ free on the D: drive where
 # the build lives, confirmed via the disk space steps below).
@@ -189,6 +218,9 @@ jobs:
       - name: Build (mach build) with memory monitoring
         working-directory: ${{ runner.temp }}/source
         run: |
+          $buildStartTime = Get-Date
+          Set-Content -Path "$env:RUNNER_TEMP\build-start-time.txt" -Value $buildStartTime.ToString("o")
+
           $memLog = "$env:RUNNER_TEMP\mem-monitor.log"
           $job = Start-Job -ScriptBlock {
             param($logPath)
@@ -232,6 +264,30 @@ jobs:
             Write-Host "No build log found at $log"
           }
 
+      - name: Check Windows Error Reporting for crash events
+        if: always()
+        run: |
+          $werLog = "$env:RUNNER_TEMP\wer-events.log"
+          $startTimeFile = "$env:RUNNER_TEMP\build-start-time.txt"
+          if (Test-Path $startTimeFile) {
+            $startTime = [DateTime]::Parse((Get-Content $startTimeFile))
+          } else {
+            Write-Host "No build-start-time.txt found, defaulting to 4 hours ago"
+            $startTime = (Get-Date).AddHours(-4)
+          }
+
+          Write-Host "Checking Application event log for Event ID 1000/1001 since $startTime"
+          $events = Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001; StartTime=$startTime} -ErrorAction SilentlyContinue
+
+          if ($events) {
+            Write-Host "----- Found $($events.Count) WER/crash event(s) -----"
+            $events | Format-List | Out-File -FilePath $werLog -Encoding UTF8
+            Get-Content $werLog
+          } else {
+            Write-Host "No Event ID 1000/1001 entries found in the Application log since build start."
+            Set-Content -Path $werLog -Value "No Event ID 1000/1001 entries found in the Application log since $startTime."
+          }
+
       - name: Upload full build log and memory monitor log
         if: always()
         uses: actions/upload-artifact@v4
@@ -240,6 +296,7 @@ jobs:
           path: |
             ${{ runner.temp }}/mach-build-full.log
             ${{ runner.temp }}/mem-monitor.log
+            ${{ runner.temp }}/wer-events.log
           retention-days: 14
 
       - name: Package installer (mach build installer)
