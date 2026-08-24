@@ -84,11 +84,42 @@
 # passed via MOZ_MAKE_FLAGS in mozconfig (mk_add_options MOZ_MAKE_FLAGS=...),
 # and that this reaches mozmake correctly on Windows.
 #
-# Run #8's change: add mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"
-# to mozconfig. This does not change what gets built or how - it only
-# changes how mozmake prints output, so if a real error message has been
-# getting scrambled/lost in interleaved parallel output this whole time,
-# this run should finally show it in full instead of a bare Error 2.
+# Run #8 added mk_add_options MOZ_MAKE_FLAGS="--output-sync=target" to
+# mozconfig, and confirmed via the log (mozmake.exe -f client.mk
+# --output-sync=target -j4) that the flag was genuinely active for the whole
+# build. The identical silent Error 2 signature reproduced anyway (back at
+# crash_helper_server.lib this run) - this DISPROVES the output-interleaving
+# hypothesis, since output-sync buffers and prints each recipe's full output
+# as one block once it finishes, so a real error message could not have been
+# hidden by interleaving if one existed. Tracing the log further showed the
+# failing target's own sub-make process never printed an error before the
+# parent process reported Error 2 - the shape of an abrupt process death
+# (crash or external kill), not a normal error being lost.
+#
+# With OOM, Defender, and output-interleaving all ruled out by direct
+# evidence, the one variable never checked was whether windows-latest is
+# even a stable target. It isn't: confirmed via GitHub's own
+# actions/runner-images repo (issue #14017) that windows-latest migrated
+# from Visual Studio 2022 to Visual Studio 2026 the week of June 8-15, 2026 -
+# meaning every run so far (all in the last few days) has been building on
+# a brand-new toolchain (Windows Server 2025 / VS2026 / MSVC toolset "18"),
+# not the VS2022 stack most of the wider Firefox/Thunderbird build community
+# has actually exercised. GitHub's own migration announcement tells anyone
+# who needs the older, known toolchain to use the windows-2022 label
+# instead. Real successful Thunderbird forks (e.g. Betterbird, confirmed via
+# their own blog) build on a single fixed, deliberately-chosen machine, not
+# an auto-updating "whatever is current" image - the opposite of what
+# windows-latest gives us.
+#
+# Run #9's change: pin runs-on to windows-2022 instead of windows-latest, so
+# the build runs on the toolchain the wider Firefox/Thunderbird ecosystem has
+# actually been tested against. No other change. This is a direct,
+# falsifiable test: if this run succeeds, or at least produces a real,
+# different diagnostic instead of a silent Error 2, that confirms the VS2026
+# migration as the root cause. If the identical silent signature still
+# reproduces on windows-2022, this hypothesis is ruled out too, and Windows
+# Event Log / WER crash capture (Get-WinEvent, Event ID 1000/1001) is the
+# next diagnostic to add.
 #
 # Remaining known risk (see Top-Dogs-Mail-Project-Reference.md for detail):
 # disk space - checked and currently fine (140GB+ free on the D: drive where
@@ -99,7 +130,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 300
     defaults:
       run:
