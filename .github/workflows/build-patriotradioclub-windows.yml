@@ -346,9 +346,9 @@ jobs:
             ${{ runner.temp }}/wer-events.log
           retention-days: 14
 
-      - name: Package installer (mach build installer)
+      - name: Package installer (mach package)
         working-directory: ${{ runner.temp }}/source
-        run: python mach build installer
+        run: python mach package
 
       - name: Locate packaged installer
         id: find_installer
