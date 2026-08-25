@@ -4,6 +4,6 @@
 
 -brand-shorter-name = Top Dogs Mail
 -brand-short-name = Top Dogs Mail
--brand-full-name = Top Dogs Mail
+-brand-full-name = Top Dogs Mail - Patriot Radio Club
 -vendor-short-name = Top Dogs Development
 trademarkInfo = Top Dogs Mail is built on Mozilla Thunderbird, customized and distributed by Top Dogs Development.

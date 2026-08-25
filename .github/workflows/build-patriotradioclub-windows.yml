@@ -154,6 +154,20 @@
 # disk space - checked and currently fine (140GB+ free on the D: drive where
 # the build lives, confirmed via the disk space steps below).
 
+#
+# Run 11 (2026-08-25): repo now carries everything proven manually on the
+# dedicated build VM this session - branding.nsi, the 4 .ico + 3 NSIS wizard
+# .bmp files, edition-qualified brand.dtd/ftl/properties, --disable-updater,
+# and the full app-identity rename (MOZ_APP_NAME/BASENAME/VENDOR/ID plus the
+# defines.nsi.in/installer.nsi strings) applied via a new step right after
+# branding is copied in. MOZ_APP_PROFILE is deliberately left untouched (see
+# Top-Dogs-Mail-Project-Reference.md, "CRITICAL product requirement" section)
+# so this can replace an existing real Thunderbird install without losing
+# accounts. This does NOT address the still-unexplained silent Error 2 crash
+# from runs 3-10 above - that mystery was never root-caused, only left behind
+# by moving the build to a dedicated VM. If it recurs here, it's unrelated to
+# tonight's changes and needs its own fresh diagnosis.
+#
 on:
   workflow_dispatch:
 
@@ -197,6 +211,38 @@ jobs:
           New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub" | Out-Null
           Copy-Item -Recurse -Force -Path "branding/mozilla-branding/patriotradioclub/*" -Destination "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub/"
 
+      - name: Apply Top Dogs Mail app-identity rename (proven manually 2026-08-25 on the dedicated build VM)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            $content = Get-Content -Path $Path -Raw
+            if (-not $content.Contains($Old)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $Old"
+              exit 1
+            }
+            $content = $content.Replace($Old, $New)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_NAME", "thunderbird")' 'imply_option("MOZ_APP_NAME", "topdogsmail")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_BASENAME", "Thunderbird")' 'imply_option("MOZ_APP_BASENAME", "Top Dogs Mail")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_ID", "{3550f703-e582-4d05-9a08-453d09bdfdc6}")' 'imply_option("MOZ_APP_ID", "{eec8ce29-6914-4ca8-b125-312cd6a6dee8}")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_VENDOR", "Mozilla")' 'imply_option("MOZ_APP_VENDOR", "Top Dogs Development")'
+          Write-Host "moz.configure identity rename applied (MOZ_APP_PROFILE deliberately left as stock Thunderbird - preserves an existing user's profile/accounts when this replaces a real Thunderbird install)"
+
+          $defines = "comm/mail/installer/windows/nsis/defines.nsi.in"
+          Replace-Exact $defines '!define AppName               "Thunderbird"' '!define AppName               "Top Dogs Mail"'
+          Replace-Exact $defines '!define WindowClass           "ThunderbirdMessageWindow"' '!define WindowClass           "TopDogsMailMessageWindow"'
+          Replace-Exact $defines '!define AppRegNameMail        "Thunderbird"' '!define AppRegNameMail        "Top Dogs Mail"'
+          Replace-Exact $defines '!define AppRegNameNews        "Thunderbird (News)"' '!define AppRegNameNews        "Top Dogs Mail (News)"'
+          Replace-Exact $defines '!define AppRegNameCalendar    "Thunderbird (Calendar)"' '!define AppRegNameCalendar    "Top Dogs Mail (Calendar)"'
+          Replace-Exact $defines '!define ClientsRegName        "Mozilla Thunderbird"' '!define ClientsRegName        "Top Dogs Mail"'
+          Replace-Exact $defines '!define BrandProductName      "Thunderbird"' '!define BrandProductName      "Top Dogs Mail"'
+          Write-Host "defines.nsi.in identity rename applied (CERTIFICATE_NAME/CERTIFICATE_ISSUER deliberately left as Mozilla's real signing identity, not ours to set)"
+
+          Replace-Exact "comm/mail/installer/windows/nsis/installer.nsi" '!define AbortSurveyURL "https://live.thunderbird.net/survey/cancel/?page="' '!define AbortSurveyURL "https://topdogs.dev/patriot-radio-club/install-cancelled/?step="'
+          Write-Host "installer.nsi AbortSurveyURL repointed to our own site"
+
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
         run: python mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
@@ -207,6 +253,7 @@ jobs:
           Set-Content -Path mozconfig -Value 'ac_add_options --enable-project=comm/mail'
           Add-Content -Path mozconfig -Value 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub'
           Add-Content -Path mozconfig -Value 'mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"'
+          Add-Content -Path mozconfig -Value 'ac_add_options --disable-updater'
 
       - name: Vendor Rust dependencies
         working-directory: ${{ runner.temp }}/source
