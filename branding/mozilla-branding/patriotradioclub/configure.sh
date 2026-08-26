@@ -5,4 +5,4 @@
 # Top Dogs Mail branding for Patriot Radio Club.
 # Based on Mozilla Thunderbird, customized by Top Dogs Development.
 
-MOZ_APP_DISPLAYNAME=Top Dogs Mail
+MOZ_APP_DISPLAYNAME="PRC Mail"
