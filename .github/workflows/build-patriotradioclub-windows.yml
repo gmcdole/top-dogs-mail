@@ -354,15 +354,36 @@ jobs:
         id: find_installer
         working-directory: ${{ runner.temp }}/source
         run: |
-          $installer = Get-ChildItem -Recurse -Path obj-*\dist\install\sea -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $installer) {
-            $installer = Get-ChildItem -Recurse -Path obj-*\dist -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # Run 12 diagnosis (2026-08-25): the naive fallback here previously grabbed
+          # obj-*\dist\bin\uninstall\helper.exe (the NSIS *uninstaller*, always built as a
+          # normal side effect of `mach build`, unrelated to packaging) because it was simply
+          # the first *.exe found under dist. Confirmed via the actual "Package installer"
+          # step log for run #12 that `mach package` produced the real installer at
+          # comm/mail/installer/windows/instgen/setup.exe (an NSIS-built installer, ~739KB -
+          # this run's mozilla-central/comm-central snapshot produced this size; earlier this
+          # same night, the dedicated build VM's snapshot instead produced a much larger
+          # (~90MB) installer directly under dist\ - the two are not guaranteed to match since
+          # this workflow always builds from today's latest upstream source, not a pinned
+          # revision). Check known-good locations by name first; if none match, list every
+          # .exe actually found so a human can see what's really there instead of silently
+          # uploading the wrong file again.
+          $candidates = @(
+            "obj-*\dist\install\sea\*.exe",
+            "obj-*\comm\mail\installer\windows\instgen\setup.exe",
+            "obj-*\dist\*.exe"
+          )
+          $installer = $null
+          foreach ($pattern in $candidates) {
+            $installer = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($installer) { break }
           }
           if (-not $installer) {
-            Write-Error "No installer .exe found under obj-*/dist - packaging step likely did not produce the expected output. Check the 'Package installer' step log."
+            Write-Warning "No installer found via known-good patterns. Listing all .exe files under obj-*\dist and obj-*\comm\mail\installer for manual inspection:"
+            Get-ChildItem -Recurse -Path obj-*\dist,obj-*\comm\mail\installer -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+            Write-Error "No installer .exe found via known-good patterns - packaging step likely did not produce the expected output, or produced it somewhere new. Check the list above and the 'Package installer' step log."
             exit 1
           }
-          Write-Host "Found installer: $($installer.FullName)"
+          Write-Host "Found installer: $($installer.FullName) ($($installer.Length) bytes)"
           echo "installer_path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
 
       - name: Upload installer as a workflow artifact
