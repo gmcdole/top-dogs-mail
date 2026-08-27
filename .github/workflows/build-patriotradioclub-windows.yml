@@ -306,6 +306,44 @@
 # DLLs actually exist anywhere in the vendored toolchain cache for this to find - run 16
 # is the test of that.
 #
+# Run 16 (2026-08-27): built from commit fcad34c. The new step's log confirmed the
+# hoped-for result at build time - "Bundled 3 of 3 VC++ runtime DLLs into dist\bin" - all
+# three DLLs were found under %USERPROFILE%\.mozbuild and copied into dist\bin before
+# `mach package` ran. But the real install test (Gene, same protocol as prior runs) still
+# failed to launch, and direct inspection of the installed folder found ALL THREE DLLs
+# still absent - not a partial fix, the dist\bin copy made no difference to the final
+# installer at all. (Two separate launch attempts reported two different missing-DLL
+# names - MSVCP140.dll first, then VCRUNTIME140.dll on retry - but Gene confirmed nothing
+# changed between attempts, so this is just the Windows loader reporting whichever missing
+# dependency it hits first in a non-deterministic order, not evidence of a partial fix.)
+#
+# Root cause found (2026-08-27), via direct inspection of comm-central's actual
+# mail/installer/package-manifest.in source (hg.mozilla.org), not guessing: this manifest
+# is NOT a blind sweep of whatever's in dist\bin. The runtime-DLL block is an explicit,
+# macro-driven entry gated behind "#if MOZ_PACKAGE_MSVC_DLLS", and the three DLL
+# filenames themselves come from configure-time variables (MSVC_C_RUNTIME_DLL /
+# MSVC_C_RUNTIME_1_DLL / MSVC_CXX_RUNTIME_DLL) that Mozilla's build system sets from a
+# hardcoded per-MSVC-toolset-version lookup table - confirmed via Mozilla bug 569268, the
+# original patch introducing this mechanism ("some defines per-VC version to pick the
+# right one"). Our build vendors MSVC 14.51.36231, far newer than anything in that table,
+# so MOZ_PACKAGE_MSVC_DLLS never resolves true for us and the whole block compiles out of
+# package-manifest.in before packaging even starts - meaning nothing in the manifest ever
+# told `mach package` to copy these files, regardless of what run 16's step put in
+# dist\bin. This also explains why run 14's full build log never mentioned these DLL
+# names or the word "redist" anywhere: the code path that would log that never runs for
+# our toolchain version.
+#
+# Fix for run 17: added a new step, "Add unconditional VC++ runtime DLL entries to
+# package-manifest.in", right after the identity-rename step (so it runs on the freshly
+# cloned source before anything consumes the manifest) - it appends explicit, unconditional
+# entries for msvcp140.dll, vcruntime140.dll, and vcruntime140_1.dll directly to
+# comm/mail/installer/package-manifest.in, bypassing the version-table gate entirely.
+# This is necessary but works only together with run 16's existing dist\bin copy step,
+# kept as-is: that step puts the real DLL bytes in dist\bin, this new step makes the
+# manifest actually reference them by name so mach package's manifest-driven copy has
+# something to find. Not yet confirmed end-to-end - the real test is another install +
+# launch check in Windows Sandbox once run 17 completes.
+#
 on:
   workflow_dispatch:
 
@@ -380,6 +418,40 @@ jobs:
 
           Replace-Exact "comm/mail/installer/windows/nsis/installer.nsi" '!define AbortSurveyURL "https://live.thunderbird.net/survey/cancel/?page="' '!define AbortSurveyURL "https://topdogs.dev/patriot-radio-club/install-cancelled/?step="'
           Write-Host "installer.nsi AbortSurveyURL repointed to our own site"
+
+      - name: Add unconditional VC++ runtime DLL entries to package-manifest.in
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          # Root cause found 2026-08-27 (see run 16/17 history comment near the top of this
+          # file for the full evidence trail). Short version: package-manifest.in's own
+          # runtime-DLL block is gated behind "#if MOZ_PACKAGE_MSVC_DLLS", which Mozilla's
+          # build system only sets true for MSVC toolset versions in its own hardcoded
+          # lookup table (Mozilla bug 569268) - our vendored 14.51.36231 isn't in it, so the
+          # block compiles out and package-manifest.in never references these files at all
+          # for our build, regardless of what the "Locate and bundle..." step (below, later
+          # in this workflow) puts in dist\bin. This step appends our own unconditional
+          # entries so mach package's manifest-driven copy has something to find. Confirmed
+          # via direct inspection of comm-central's actual package-manifest.in
+          # (hg.mozilla.org, 2026-08-27) that the file ends with a plain top-level line, not
+          # an open conditional - so an append is safe here.
+          $manifest = "comm/mail/installer/package-manifest.in"
+          $marker = "; Top Dogs Mail: unconditional VC++ runtime DLLs (run 17 fix - see workflow history comment for why)"
+          $content = Get-Content -Path $manifest -Raw
+          if ($content.Contains($marker)) {
+            Write-Host "package-manifest.in already has the unconditional VC++ runtime DLL block - skipping"
+          } else {
+            $lines = @(
+              "",
+              $marker,
+              "#ifdef XP_WIN",
+              "@BINPATH@/msvcp140.dll",
+              "@BINPATH@/vcruntime140.dll",
+              "@BINPATH@/vcruntime140_1.dll",
+              "#endif"
+            )
+            Add-Content -Path $manifest -Value $lines
+            Write-Host "Appended unconditional msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll entries to $manifest"
+          }
 
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
