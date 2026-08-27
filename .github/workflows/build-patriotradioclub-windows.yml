@@ -211,6 +211,61 @@
 # whether this one fix resolves the naming bug, the empty-payload bug, and
 # confirms the corrected eagle image, all at once.
 #
+# Run 14 (2026-08-27): built from commit 608c7e7 (via 270d52a). Checked directly
+# against the "Package installer (mach package)" and "Locate packaged installer"
+# step logs, not just the green checkmark. Result: the found installer was
+# 757,041 bytes - 98 bytes different from run 13's 756,943 bytes, i.e.
+# essentially the same tiny, broken installer. The MOZ_APP_DISPLAYNAME
+# quoting fix did NOT fix the empty-payload bug - that hypothesis from the
+# run 13 notes is disproven. The naming fix itself is still believed correct
+# (the bug and mechanism were both directly confirmed from run 13's build
+# log) but was not re-verified visually this run - no Windows Sandbox install
+# test was done against run 14's installer, since it still can't launch
+# anything either way.
+#
+# Real progress this time: read the *complete* "Package installer" step log
+# (previously only partially visible via the GitHub UI's virtualized log
+# view - pulled the full text via Actions' "Download log archive" instead).
+# It shows something the earlier partial view never surfaced: right after
+# the small instgen/setup.exe (757KB) NSIS compile, the same step runs UPX
+# to compress a "7zSD.sfx" self-extracting stub, then runs 7-Zip and reports
+# "11 folders, 58 files, 395509918 bytes (378 MiB)" scanned and archived into
+# an app.7z at 89,764,678 bytes (~86 MiB) - i.e. mach package DOES build the
+# full ~86MB application payload archive in this same step. Per Mozilla's own
+# installer build docs (firefox-source-docs.mozilla.org, Windows installer
+# build page): unless MOZ_STUB_INSTALLER is explicitly set, "only the full
+# installer is built" - the small instgen/setup.exe is only the front-end
+# NSIS shell, and the real full/complete installer is produced by
+# concatenating the UPX-packed SFX module with the 7z payload into one file,
+# normally expected at obj-*\dist\install\sea\*.exe. That is genuinely the
+# FIRST pattern our own "Locate packaged installer" step already checks -
+# but it comes up empty every run (Get-ChildItem finds nothing there), so
+# the script falls through to the small instgen/setup.exe and uploads that
+# instead. Because the script `break`s on the first pattern with any match,
+# it never even checks the third pattern (obj-*\dist\*.exe), which may or
+# may not hold the real combined installer under a name we haven't
+# anticipated. Not yet confirmed where the ~86MB combined file actually
+# lands, or whether it lands anywhere at all in this build configuration -
+# the GitHub Actions runner that produced run 14 no longer exists to inspect
+# directly, so run 15 needs to gather that evidence itself.
+#
+# Fix applied for run 15, evidence-gathering rather than a guessed fix: (1)
+# the "Locate packaged installer" step now collects EVERY match across all
+# three candidate patterns and picks the largest by byte size, instead of
+# stopping at the first pattern with any match at all - this alone might
+# surface a real combined installer if one exists under obj-*\dist\*.exe
+# and was simply being shadowed by the smaller instgen/setup.exe match. (2)
+# the step now ALWAYS logs a full recursive listing of every .exe under
+# obj-*\dist and obj-*\comm\mail\installer, sorted largest-first, win or
+# lose - not just when nothing matches - so if the true full installer still
+# isn't found by the candidate patterns, we get hard evidence of its real
+# path and size instead of another guess. Not yet a confirmed fix for the
+# payload bug itself - if no larger installer turns up anywhere in that
+# listing, the next suspect is the mozconfig's `--disable-updater` line
+# possibly suppressing the sea/ concatenation step upstream in mach package,
+# which would need its own separate investigation and is not addressed by
+# this change.
+#
 on:
   workflow_dispatch:
 
@@ -407,23 +462,42 @@ jobs:
           # same night, the dedicated build VM's snapshot instead produced a much larger
           # (~90MB) installer directly under dist\ - the two are not guaranteed to match since
           # this workflow always builds from today's latest upstream source, not a pinned
-          # revision). Check known-good locations by name first; if none match, list every
-          # .exe actually found so a human can see what's really there instead of silently
-          # uploading the wrong file again.
+          # revision). Check known-good locations by name first.
+          #
+          # Run 14 diagnosis (2026-08-27): this step was still finding and uploading the
+          # small instgen/setup.exe (~757KB) every run, because the original loop `break`s
+          # on the FIRST pattern with any match at all - it never even checked the third
+          # pattern (obj-*\dist\*.exe) once the second pattern matched, even though that
+          # third pattern might catch a genuine full installer under a name/location the
+          # first two patterns miss. Per Mozilla's own installer build docs, the small
+          # instgen/setup.exe is only ever the NSIS front-end shell; the real full/complete
+          # installer is a separate ~80-90MB file produced by concatenating a UPX-packed SFX
+          # module with the packaged application payload, normally expected under
+          # obj-*\dist\install\sea\*.exe (our first, and so far always-empty, pattern).
+          # Changed this step to (a) collect matches across ALL three patterns instead of
+          # stopping at the first pattern with any match, and pick the LARGEST file found
+          # rather than assuming pattern order reflects correctness, and (b) always print a
+          # full recursive listing of every .exe under obj-*\dist and obj-*\comm\mail\installer,
+          # sorted largest-first, whether or not a candidate pattern matched - so if the real
+          # full installer still isn't caught by these patterns, we get hard evidence of its
+          # actual size and path instead of another guess.
           $candidates = @(
             "obj-*\dist\install\sea\*.exe",
             "obj-*\comm\mail\installer\windows\instgen\setup.exe",
             "obj-*\dist\*.exe"
           )
-          $installer = $null
-          foreach ($pattern in $candidates) {
-            $installer = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($installer) { break }
+          $allMatches = foreach ($pattern in $candidates) {
+            Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue
           }
+          Write-Host "--- Candidates found across known-good patterns (largest first) ---"
+          $allMatches | Sort-Object Length -Descending | ForEach-Object { Write-Host "$($_.Length) bytes  $($_.FullName)" }
+
+          Write-Host "--- Full diagnostic listing: every .exe under obj-*\dist and obj-*\comm\mail\installer (largest first, always run) ---"
+          Get-ChildItem -Recurse -Path obj-*\dist,obj-*\comm\mail\installer -Filter *.exe -ErrorAction SilentlyContinue | Sort-Object Length -Descending | ForEach-Object { Write-Host "$($_.Length) bytes  $($_.FullName)" }
+
+          $installer = $allMatches | Sort-Object Length -Descending | Select-Object -First 1
           if (-not $installer) {
-            Write-Warning "No installer found via known-good patterns. Listing all .exe files under obj-*\dist and obj-*\comm\mail\installer for manual inspection:"
-            Get-ChildItem -Recurse -Path obj-*\dist,obj-*\comm\mail\installer -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
-            Write-Error "No installer .exe found via known-good patterns - packaging step likely did not produce the expected output, or produced it somewhere new. Check the list above and the 'Package installer' step log."
+            Write-Error "No installer .exe found via known-good patterns - packaging step likely did not produce the expected output, or produced it somewhere new. Check the diagnostic listing above and the 'Package installer' step log."
             exit 1
           }
           Write-Host "Found installer: $($installer.FullName) ($($installer.Length) bytes)"
