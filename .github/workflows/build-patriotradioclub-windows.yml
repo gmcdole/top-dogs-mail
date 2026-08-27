@@ -266,6 +266,46 @@
 # which would need its own separate investigation and is not addressed by
 # this change.
 #
+# Run 15 (2026-08-27): built from commit c7ce536. The largest-file-wins fix worked on
+# the first try - found the real combined full installer at
+# obj-*\dist\topdogsmail-156.0a1.en-US.win64.installer.exe (89,956,359 bytes), and the
+# diagnostic listing showed dist\bin\topdogsmail.exe and dist\topdogsmail\topdogsmail.exe
+# both present and correctly sized. Uploaded installer artifact: 85.7MB (up from run 14's
+# 211KB). Windows Sandbox install test (Gene, same protocol as prior runs) confirmed:
+# wizard clean end to end, "PRC Mail" naming correct on Setup Type and Summary pages
+# (MOZ_APP_DISPLAYNAME fix from 608c7e7 confirmed working), corrected eagle image displays
+# (though Gene found two small remaining cosmetic defects in wizWatermark.bmp on close
+# inspection - a white gap near the eagle's feet/talons and a mismatched white/blue patch
+# near the arrow's feathers, both logged in Top-Dogs-Mail-Project-Reference.md as
+# still-owed, non-blocking touch-ups). The real test: installed folder was inspected
+# directly and contains a genuinely complete application tree (xul.dll, omni.ja,
+# topdogsmail.exe, chrome/, defaults/, fonts/, isp/, VisualElements/, uninstall/ - not just
+# 2 DLLs like run 13). This is the first run to actually produce a real, complete install.
+#
+# But launching topdogsmail.exe (via the Finish page's "Launch now" checkbox) failed with
+# a genuine Windows loader error: "The code execution cannot proceed because MSVCP140.dll
+# was not found." Confirmed by direct inspection that msvcp140.dll, vcruntime140.dll, and
+# vcruntime140_1.dll are all absent from the installed folder. Confirmed via full-text
+# search of run 14's complete build log that these DLL names and the word "redist" never
+# appear anywhere in the build output - the copy step that should bundle them apparently
+# never runs (or never logs anything) in this build configuration. Per Mozilla's own
+# Bugzilla history (bug 1624546), these DLLs are normally copied from the vendored MSVC
+# toolchain's own VC\Redist folder during packaging, using filename patterns tied to
+# specific toolset versions - our build vendors a much newer MSVC toolset (14.51.36231,
+# per run 9's diagnosis) than Mozilla's hardcoded patterns may recognize. Plausible
+# mechanism, not proven.
+#
+# Fix for run 16: rather than patching Mozilla's own packaging internals, added a new step
+# ("Locate and bundle missing VC++ runtime DLLs into dist\bin") that runs after mach build
+# and before mach package - it searches the vendored toolchain cache
+# (%USERPROFILE%\.mozbuild) for msvcp140.dll, vcruntime140.dll, and vcruntime140_1.dll,
+# logs everywhere it finds them (or a clear warning if it finds nothing, which would mean
+# these DLLs aren't vendored into this environment at all and point the investigation
+# elsewhere), and copies any x64 matches into dist\bin ourselves so mach package's normal
+# file sweep picks them up along with everything else. Not yet confirmed whether these
+# DLLs actually exist anywhere in the vendored toolchain cache for this to find - run 16
+# is the test of that.
+#
 on:
   workflow_dispatch:
 
@@ -443,6 +483,67 @@ jobs:
             ${{ runner.temp }}/mem-monitor.log
             ${{ runner.temp }}/wer-events.log
           retention-days: 14
+
+      - name: Locate and bundle missing VC++ runtime DLLs into dist\bin
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          # Run 15 finding (2026-08-27): run 15's installer (the real ~86-90MB combined
+          # full installer, correctly located this time thanks to the largest-file-wins
+          # fix above) installed a genuinely complete application tree in Windows Sandbox -
+          # xul.dll, omni.ja, topdogsmail.exe, all present and correctly sized. But
+          # launching topdogsmail.exe failed with a real Windows loader error: "The code
+          # execution cannot proceed because MSVCP140.dll was not found." Confirmed by
+          # directly inspecting the installed folder that msvcp140.dll, vcruntime140.dll,
+          # and vcruntime140_1.dll are ALL absent - and confirmed via a full-text search of
+          # run 14's complete mach-build-full.log that these DLL names and the word
+          # "redist" never appear anywhere in the build output at all. Per Mozilla's own
+          # Bugzilla history (bug 1624546, "Include vcruntime140_1.dll... from the redist
+          # directory in the package"), Firefox/Thunderbird's official build normally
+          # copies these DLLs from the vendored MSVC toolchain's own VC\Redist folder into
+          # dist\bin as a packaging step, using filename patterns tied to specific
+          # toolset versions. Our build vendors a very new MSVC toolset (14.51.36231, per
+          # run 9's diagnosis) that Mozilla's hardcoded copy patterns may not have been
+          # updated to recognize - a plausible mechanism, not yet proven, for why the copy
+          # never happens (silently) in our build. Rather than trying to patch Mozilla's
+          # own internal packaging logic to recognize a newer toolset, this step works
+          # around it in our own workflow: search the vendored toolchain's own cache for
+          # these exact DLLs and copy any x64 matches into dist\bin ourselves, BEFORE
+          # `mach package` runs, so they get swept into the installer the normal way along
+          # with everything else already in dist\bin. This also serves as a diagnostic in
+          # its own right: if the search below finds nothing, the DLLs may not be vendored
+          # into this build environment at all, which would point the investigation
+          # somewhere else entirely (e.g. explicitly vendoring the VC++ Redistributable via
+          # a separate install step) rather than a simple copy fix.
+          Write-Host "--- Searching vendored MSVC toolchain cache for VC++ runtime DLLs ---"
+          $dllNames = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+          $found = Get-ChildItem -Path "$env:USERPROFILE\.mozbuild" -Recurse -Include $dllNames -ErrorAction SilentlyContinue
+          if ($found) {
+            $found | ForEach-Object { Write-Host "$($_.Length) bytes  $($_.FullName)" }
+          } else {
+            Write-Warning "No matches for msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll found anywhere under $env:USERPROFILE\.mozbuild - these DLLs may not be vendored into this build environment at all."
+          }
+
+          $distBin = Get-ChildItem -Path "obj-*\dist\bin" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $distBin) {
+            Write-Error "Could not find obj-*\dist\bin - build output layout may have changed. Skipping DLL bundling."
+            exit 0
+          }
+          Write-Host "--- Copying any x64 matches into $($distBin.FullName) ---"
+          $copied = @()
+          foreach ($name in $dllNames) {
+            $candidate = $found | Where-Object { $_.Name -eq $name -and $_.FullName -match "\\x64\\" } | Select-Object -First 1
+            if (-not $candidate) {
+              $candidate = $found | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+            }
+            if ($candidate) {
+              Copy-Item -Path $candidate.FullName -Destination (Join-Path $distBin.FullName $name) -Force
+              Write-Host "Copied $name from $($candidate.FullName)"
+              $copied += $name
+            } else {
+              Write-Warning "$name not found anywhere under $env:USERPROFILE\.mozbuild - dist\bin will still be missing it."
+            }
+          }
+          Write-Host "--- Bundled $($copied.Count) of $($dllNames.Count) VC++ runtime DLLs into dist\bin ---"
 
       - name: Package installer (mach package)
         working-directory: ${{ runner.temp }}/source
