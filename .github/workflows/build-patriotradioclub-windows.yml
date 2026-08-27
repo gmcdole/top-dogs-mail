@@ -168,6 +168,49 @@
 # by moving the build to a dedicated VM. If it recurs here, it's unrelated to
 # tonight's changes and needs its own fresh diagnosis.
 #
+# Run 12 (2026-08-25): packaging succeeded this run via the `mach package`
+# fix from run 11's diagnosis. Sanity check of the uploaded installer
+# artifact found it was actually the NSIS uninstaller (helper.exe,
+# 1,070,115 bytes) - the "Locate packaged installer" step below was
+# naively grabbing the first .exe found under dist, which happened to be
+# the uninstaller, always built as a normal side effect of mach build and
+# unrelated to packaging. Checked the actual "Package installer" step log
+# directly and confirmed mach package did produce a genuine installer at
+# obj-*/comm/mail/installer/windows/instgen/setup.exe - but only 756,943
+# bytes (~739KB), dramatically smaller than the dedicated build VM's
+# ~90MB installer from an identical mozconfig earlier the same night.
+# Fixed the detection step (see "Run 12 diagnosis" comment below) to check
+# known-good paths by exact name first, and to fail loudly with a full
+# listing of every .exe actually found if none match, instead of silently
+# uploading the wrong file again.
+#
+# Run 13 (2026-08-26): triggered to confirm the run 12 installer-detection
+# fix. Result: the detection logic itself worked correctly - it found and
+# uploaded the real instgen/setup.exe (756,943 bytes) as intended. But
+# actually installing that artifact in Windows Sandbox revealed a much
+# bigger problem: the installer only copies 2 helper DLLs (MapiProxy_InUse.dll,
+# mozMapi32_InUse.dll) - no topdogsmail.exe, no core application resources
+# at all. Confirmed via the sandbox's install.log and via run 13's own full
+# build log that this is genuinely what mach package produced, not a
+# wrong-file-detection issue. Root cause found in that build log: this
+# branding folder's configure.sh had an UNQUOTED
+# `MOZ_APP_DISPLAYNAME=Top Dogs Mail` line, which shell-parses as setting
+# the variable to just "Top" (and attempting to run a nonexistent command
+# "Dogs Mail") - explaining the "Top" truncation seen throughout the
+# installer wizard (Setup Type page, Summary page, desktop/Start Menu
+# shortcut names). Fixed to `MOZ_APP_DISPLAYNAME="PRC Mail"` (quoted, and
+# updated to the subsidiary's own short name per the branding policy
+# clarified the same day - see Top-Dogs-Mail-Project-Reference.md,
+# "Product name policy clarified" section). Working hypothesis, not yet
+# confirmed: the same broken line may also explain the empty installer
+# payload above, since `mach package` is a separate mach invocation that
+# likely re-reads this same file independently of `mach build`. Also
+# replaced the wizWatermark.bmp wizard-sidebar eagle image (cropped in an
+# earlier session) with a corrected version, fully visible on the approved
+# Old Glory Blue background. Committed as 608c7e7. Run 14 is the test of
+# whether this one fix resolves the naming bug, the empty-payload bug, and
+# confirms the corrected eagle image, all at once.
+#
 on:
   workflow_dispatch:
 
