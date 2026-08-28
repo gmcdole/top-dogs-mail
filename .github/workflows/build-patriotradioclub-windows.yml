@@ -453,6 +453,82 @@ jobs:
             Write-Host "Appended unconditional msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll entries to $manifest"
           }
 
+      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            $content = Get-Content -Path $Path -Raw
+            if (-not $content.Contains($Old)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $Old"
+              exit 1
+            }
+            $content = $content.Replace($Old, $New)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          $template = "comm/mail/components/accountcreation/templates/accountHubEmailAutoFormTemplate.inc.xhtml"
+          $thundermailBlock = @'
+                <div class="account-hub-thundermail-header">
+                  <button class="account-hub-thundermail-button" type="button">
+                    <img class="account-hub-thundermail-icon" src="" alt="" />
+                    <span data-l10n-id="account-hub-thundermail-button"></span>
+                  </button>
+                  <div class="account-hub-thundermail-divider">
+                    <span
+                      class="account-hub-thundermail-divider-text"
+                      data-l10n-id="account-hub-thundermail-divider-text"
+                    ></span>
+                  </div>
+                  <h1
+                    class="account-hub-thundermail-title"
+                    data-l10n-id="account-hub-email-setup-header"
+                  ></h1>
+                </div>
+          '@
+          Replace-Exact $template $thundermailBlock ""
+          Write-Host "Removed Sign in with Thundermail button from account hub email setup template"
+
+          $widget = "comm/mail/components/accountcreation/content/widgets/email-auto-form.mjs"
+          $fieldDecl = @'
+            /**
+             * The Thundermail sign in button.
+             *
+             * @type {HTMLButtonElement}
+             */
+            #thundermailButton;
+
+          '@
+          Replace-Exact $widget $fieldDecl ""
+
+          $hideTitleCall = @'
+              this.shadowRoot
+                .querySelector("account-hub-header")
+                .setAttribute("hide-title-on-thundermail", "");
+
+          '@
+          Replace-Exact $widget $hideTitleCall ""
+
+          $querySelectorAssign = @'
+              this.#thundermailButton = this.querySelector(
+                ".account-hub-thundermail-button"
+              );
+          '@
+          Replace-Exact $widget $querySelectorAssign ""
+
+          Replace-Exact $widget "    this.#thundermailButton.disabled = val;`n" ""
+          Write-Host "Removed thundermailButton references from email-auto-form.mjs"
+
+          $footer = "comm/mail/components/accountcreation/templates/accountHubFooterTemplate.inc.xhtml"
+          Replace-Exact $footer 'href="https://www.thunderbird.net/donate/?utm_source=thunderbird_account_hub&amp;utm_medium=referral&amp;utm_content=hub_footer"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
+          Write-Host "Repointed Donate footer link to Top Dogs Development Square checkout"
+
+          Replace-Exact $footer 'href="https://www.thunderbird.net/privacy/"' 'href="https://topdogs.dev/?page_id=46"'
+          Write-Host "Repointed Account Hub footer Privacy Policy link to Top Dogs Mail privacy policy page"
+
+          $acctCentral = "comm/mailnews/base/content/msgAccountCentral.xhtml"
+          Replace-Exact $acctCentral 'href="https://www.thunderbird.net/donate/?utm_source=account_hub_tb_release&amp;utm_medium=referral&amp;utm_content=paragraph_text"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
+          Write-Host "Repointed Account Central donation banner link to Top Dogs Development Square checkout"
+
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
         run: python mach --no-interactive bootstrap --application-choice="Firefox for Desktop"

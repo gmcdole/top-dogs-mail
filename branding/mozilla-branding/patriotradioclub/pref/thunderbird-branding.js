@@ -26,3 +26,10 @@ pref("app.update.url.details", "https://topdogs.dev/mail/patriotradioclub/update
 // time, or the account-setup install script dropping the .xpi into the
 // profile directly) and which is actually verified vs. still planned.
 pref("extensions.activeThemeID", "patriotradioclub-theme@topdogs.dev");
+
+// Account Hub footer "Support" link (account-hub-footer.mjs sets this at
+// runtime via Services.urlFormatter.formatURLPref("app.support.baseURL"),
+// overriding the hardcoded https://support.thunderbird.net default in
+// accountHubFooterTemplate.inc.xhtml). Points at the "Top Dogs Mail -
+// Support" page on topdogs.dev (page_id=48).
+pref("app.support.baseURL", "https://topdogs.dev/?page_id=48");
