@@ -457,12 +457,23 @@ jobs:
         working-directory: ${{ runner.temp }}/source
         run: |
           function Replace-Exact($Path, $Old, $New) {
-            $content = Get-Content -Path $Path -Raw
-            if (-not $content.Contains($Old)) {
-              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $Old"
+            # Normalize line endings before comparing: run 19 failed on the first
+            # multi-line here-string match here (single-line matches in the
+            # app-identity-rename step above were unaffected) even though the
+            # source text was confirmed byte-identical outside the runner -
+            # thunderbird-desktop's .gitattributes forces "* -text" (pure LF,
+            # no normalization), so a CRLF introduced anywhere between this
+            # workflow file and the generated step script breaks an exact
+            # multi-line match. Normalizing both sides to LF makes the
+            # comparison robust regardless of where that CRLF was introduced.
+            $content = (Get-Content -Path $Path -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+            $OldNorm = ($Old -replace "`r`n", "`n") -replace "`r", "`n"
+            if (-not $content.Contains($OldNorm)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $OldNorm"
               exit 1
             }
-            $content = $content.Replace($Old, $New)
+            $NewNorm = ($New -replace "`r`n", "`n") -replace "`r", "`n"
+            $content = $content.Replace($OldNorm, $NewNorm)
             Set-Content -Path $Path -Value $content -NoNewline
           }
 
