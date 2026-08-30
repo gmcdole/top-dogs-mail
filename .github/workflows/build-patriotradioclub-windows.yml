@@ -453,7 +453,7 @@ jobs:
             Write-Host "Appended unconditional msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll entries to $manifest"
           }
 
-      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner)
+      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner, embed header logo, fix Support link default)
         working-directory: ${{ runner.temp }}/source
         run: |
           function Replace-Exact($Path, $Old, $New) {
@@ -539,6 +539,24 @@ jobs:
           $acctCentral = "comm/mailnews/base/content/msgAccountCentral.xhtml"
           Replace-Exact $acctCentral 'href="https://www.thunderbird.net/donate/?utm_source=account_hub_tb_release&amp;utm_medium=referral&amp;utm_content=paragraph_text"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
           Write-Host "Repointed Account Central donation banner link to Top Dogs Development Square checkout"
+
+          # Root cause found 2026-08-30 via live Browser Console testing on a real install:
+          # EVERY chrome://branding/content/* resource (logo-gradient.svg, about-logo.png,
+          # aboutDialog.css, about-wordmark.svg) fails with "No chrome package registered
+          # for chrome://branding/content/...". Our custom --with-branding directory's own
+          # content jar.mn and pref/thunderbird-branding.js are both silently never
+          # registered at runtime, despite building without error and despite Mozilla's own
+          # build docs confirming --with-branding is "intentionally undocumented" (unofficial,
+          # unsupported territory). Rather than keep fighting that mechanism, both fixes below
+          # bypass it entirely using the same direct-source-patch pattern already proven
+          # reliable elsewhere in this file (moz.configure identity rename, etc).
+          $accountHubHeader = "comm/mail/components/accountcreation/templates/accountHubHeaderTemplate.inc.xhtml"
+          Replace-Exact $accountHubHeader 'src="chrome://branding/content/logo-gradient.svg"' 'src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1OTIiIGhlaWdodD0iNTkyIiB2aWV3Qm94PSIwIDAgNTkyIDU5MiI+CiAgPHJhZGlhbEdyYWRpZW50IGlkPSJncmFkaWVudCIgY3g9Ii41IiBjeT0iLjUiIHI9Ii41Ij4KICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNFNUMyMDAiLz4KICAgIDxzdG9wIG9mZnNldD0iNTAlIiBzdG9wLWNvbG9yPSIjQjIyMjM0Ii8+CiAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMzQzNCNkUiLz4KICA8L3JhZGlhbEdyYWRpZW50PgogIDxyZWN0IHdpZHRoPSI1OTIiIGhlaWdodD0iNTkyIiByeD0iOTAiIGZpbGw9InVybCgjZ3JhZGllbnQpIi8+CiAgPHRleHQgeD0iMjk2IiB5PSI0MDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiCiAgICAgICAgZm9udC1mYW1pbHk9Ikdlb3JnaWEsICdUaW1lcyBOZXcgUm9tYW4nLCBzZXJpZiIgZm9udC13ZWlnaHQ9ImJvbGQiCiAgICAgICAgZm9udC1zaXplPSIzMDAiIGZpbGw9IiNGRkZGRkYiPlREPC90ZXh0Pgo8L3N2Zz4K"'
+          Write-Host "Embedded Top Dogs Mail TD-monogram logo directly into the Account Hub header template as a data URI - no external chrome:// resource to fail to register"
+
+          $corePrefs = "comm/mail/app/profile/all-thunderbird.js"
+          Replace-Exact $corePrefs 'pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");' 'pref("app.support.baseURL", "https://topdogs.dev/?page_id=48");'
+          Write-Host "Repointed Support link default directly in Thunderbird's core prefs file (all-thunderbird.js) - bypasses our branding-specific prefs file, which never loads for the same chrome-package-registration reason"
 
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
