@@ -1,8 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="592" height="592">
+<svg xmlns="http://www.w3.org/2000/svg" width="592" height="592" viewBox="0 0 592 592">
   <radialGradient id="gradient" cx=".5" cy=".5" r=".5">
     <stop offset="0%" stop-color="#E5C200"/>
     <stop offset="50%" stop-color="#B22234"/>
     <stop offset="100%" stop-color="#3C3B6E"/>
   </radialGradient>
-  <rect width="592" height="592" fill="url(#gradient)"/>
+  <rect width="592" height="592" rx="90" fill="url(#gradient)"/>
+  <text x="296" y="400" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', serif" font-weight="bold"
+        font-size="300" fill="#FFFFFF">TD</text>
 </svg>

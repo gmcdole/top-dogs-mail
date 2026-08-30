@@ -1,5 +1,3 @@
-#include ../../include/release-prefs.js
-
 // app.update.url.manual: URL user can browse to manually if for some reason
 // all update installation attempts fail.
 // app.update.url.details: a default value for the "More information about this
