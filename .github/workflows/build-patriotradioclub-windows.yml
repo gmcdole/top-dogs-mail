@@ -382,6 +382,11 @@ jobs:
         working-directory: ${{ runner.temp }}/source
         run: git clone --depth 1 https://github.com/thunderbird/thunderbird-desktop.git comm
 
+      - name: Copy real MAR-signing certificates into place
+        run: |
+          Copy-Item -Force -Path "certs/dep1.der" -Destination "${{ runner.temp }}/source/toolkit/mozapps/update/updater/dep1.der"
+          Copy-Item -Force -Path "certs/dep2.der" -Destination "${{ runner.temp }}/source/toolkit/mozapps/update/updater/dep2.der"
+
       - name: Copy Patriot Radio Club branding into place
         run: |
           New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub" | Out-Null
@@ -568,7 +573,9 @@ jobs:
           Set-Content -Path mozconfig -Value 'ac_add_options --enable-project=comm/mail'
           Add-Content -Path mozconfig -Value 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub'
           Add-Content -Path mozconfig -Value 'mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"'
-          Add-Content -Path mozconfig -Value 'ac_add_options --disable-updater'
+          Add-Content -Path mozconfig -Value 'ac_add_options --enable-update-channel=topdogsmail-release'
+          Add-Content -Path mozconfig -Value 'export MAR_CHANNEL_ID=topdogsmail-patriotradioclub-release'
+          Add-Content -Path mozconfig -Value 'export ACCEPTED_MAR_CHANNEL_IDS=topdogsmail-patriotradioclub-release'
 
       - name: Vendor Rust dependencies
         working-directory: ${{ runner.temp }}/source
