@@ -484,7 +484,7 @@ jobs:
 
           $template = "comm/mail/components/accountcreation/templates/accountHubEmailAutoFormTemplate.inc.xhtml"
           $thundermailBlock = @'
-                <div class="account-hub-thundermail-header">
+                <div class="account-hub-thundermail-header" slot="middle-content">
                   <button class="account-hub-thundermail-button" type="button">
                     <img class="account-hub-thundermail-icon" src="" alt="" />
                     <span data-l10n-id="account-hub-thundermail-button"></span>
@@ -495,10 +495,6 @@ jobs:
                       data-l10n-id="account-hub-thundermail-divider-text"
                     ></span>
                   </div>
-                  <h1
-                    class="account-hub-thundermail-title"
-                    data-l10n-id="account-hub-email-setup-header"
-                  ></h1>
                 </div>
           '@
           Replace-Exact $template $thundermailBlock ""
