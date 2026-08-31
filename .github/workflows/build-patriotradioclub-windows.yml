@@ -376,11 +376,11 @@ jobs:
 
       - name: Clone Firefox source (build platform)
         working-directory: ${{ runner.temp }}
-        run: git clone --depth 1 https://github.com/mozilla-firefox/firefox.git source
+        run: git clone --depth 1 --branch esr153 https://github.com/mozilla-firefox/firefox.git source
 
       - name: Clone Thunderbird source into comm/
         working-directory: ${{ runner.temp }}/source
-        run: git clone --depth 1 https://github.com/thunderbird/thunderbird-desktop.git comm
+        run: git clone --depth 1 --branch esr153 https://github.com/thunderbird/thunderbird-desktop.git comm
 
       - name: Copy real MAR-signing certificates into place
         run: |
