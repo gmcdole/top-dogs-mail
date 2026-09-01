@@ -458,7 +458,7 @@ jobs:
             Write-Host "Appended unconditional msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll entries to $manifest"
           }
 
-      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner, embed header logo, fix Support link default)
+      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner, embed header logo, fix Support link default, fix Support footer link, disable Release Notes link, fix first-run Privacy Notice link)
         working-directory: ${{ runner.temp }}/source
         run: |
           function Replace-Exact($Path, $Old, $New) {
@@ -507,6 +507,9 @@ jobs:
           Replace-Exact $footer 'href="https://www.thunderbird.net/privacy/"' 'href="https://topdogs.dev/?page_id=46"'
           Write-Host "Repointed Account Hub footer Privacy Policy link to Top Dogs Mail privacy policy page"
 
+          Replace-Exact $footer 'href="https://support.mozilla.org/products/thunderbird"' 'href="https://topdogs.dev/?page_id=48"'
+          Write-Host "Repointed Support footer link to Top Dogs Mail support page - ESR153 hardcodes this directly in the template with no JS/pref wiring at all (confirmed via real ESR153 source, 2026-09-01), unlike the app.support.baseURL pref patch below which an earlier pre-ESR153 account-hub-footer.mjs used to read at runtime"
+
           $acctCentral = "comm/mailnews/base/content/msgAccountCentral.xhtml"
           Replace-Exact $acctCentral 'href="https://www.thunderbird.net/donate/?utm_source=account_hub_tb_release&amp;utm_medium=referral&amp;utm_content=paragraph_text"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
           Write-Host "Repointed Account Central donation banner link to Top Dogs Development Square checkout"
@@ -528,6 +531,12 @@ jobs:
           $corePrefs = "comm/mail/app/profile/all-thunderbird.js"
           Replace-Exact $corePrefs 'pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");' 'pref("app.support.baseURL", "https://topdogs.dev/?page_id=48");'
           Write-Host "Repointed Support link default directly in Thunderbird's core prefs file (all-thunderbird.js) - bypasses our branding-specific prefs file, which never loads for the same chrome-package-registration reason"
+
+          Replace-Exact $corePrefs 'pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");' 'pref("app.releaseNotesURL", "about:blank");'
+          Write-Host "Disabled Release Notes footer link (set to about:blank) - we have no release notes page to send it to; account-hub-footer.mjs's own JS hides the link entirely whenever this pref is exactly about:blank"
+
+          Replace-Exact $corePrefs 'pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");' 'pref("datareporting.policy.firstRunURL", "https://topdogs.dev/?page_id=46");'
+          Write-Host "Repointed the first-run Privacy Notice tab (Bug 2, open and unlocated since 2026-08-25) to the Top Dogs Mail privacy policy page"
 
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
