@@ -190,6 +190,17 @@ cat > "$OUTBOX/update.xml" << XMLEOF
 </updates>
 XMLEOF
 
+# Mandatory update gate: every ESR point release built by this pipeline is,
+# by Mozilla's own uplift policy, a stability/security/high-impact-bug release
+# only (features/enhancements are barred from ESR uplift) -- so every release
+# this script publishes automatically becomes the new required minimum, no
+# separate manual gating step. Written to the brand root (not a version
+# subfolder) so it survives retention's version-subfolder-only pruning, same
+# placement as update.xml/release-notes.html above.
+cat > "$OUTBOX/min-version.json" << MINVEREOF
+{"minVersion": "$VERSION"}
+MINVEREOF
+
 touch "$VERSION_DIR/.ready"
 echo "$LATEST_RUN_ID" > "$STATE_FILE"
 

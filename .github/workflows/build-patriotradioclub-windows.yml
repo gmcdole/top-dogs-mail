@@ -555,6 +555,83 @@ jobs:
           Replace-Exact $appUpdateIni 'URL=https://@MOZ_APPUPDATE_HOST@/update/6/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%SYSTEM_CAPABILITIES%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml' 'URL=https://updates.topdogs.dev/mail/patriot-radio-club/update.xml'
           Write-Host "Repointed the real update-check URL (application.ini's [AppUpdate] URL) to our own static update-file-serving endpoint - this is the actual mechanism Services.appinfo.updateURL reads, bypassing the removed app.update.url pref entirely"
 
+      - name: Apply mandatory update-gate patch (fetch min-version.json on every launch, soft-nag notification if below minimum, fails open on any error)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            $content = (Get-Content -Path $Path -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+            $OldNorm = ($Old -replace "`r`n", "`n") -replace "`r", "`n"
+            if (-not $content.Contains($OldNorm)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $OldNorm"
+              exit 1
+            }
+            $NewNorm = ($New -replace "`r`n", "`n") -replace "`r", "`n"
+            $content = $content.Replace($OldNorm, $NewNorm)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          $msgJs = "comm/mail/base/content/messenger.js"
+          $gateOld = @'
+                Services.obs.notifyObservers(window, "extensions-late-startup");
+              });
+            },
+          '@
+          $gateNew = @'
+                Services.obs.notifyObservers(window, "extensions-late-startup");
+              });
+
+              // Mandatory update gate (Top Dogs Mail, added 2026-09-03). Fire-and-forget:
+              // never awaited, never blocks startup. Any failure (offline, unreachable
+              // server, malformed response) fails open -- the member just doesn't see the
+              // nag this launch, per standing decision.
+              (async () => {
+                try {
+                  const resp = await fetch(
+                    "https://updates.topdogs.dev/mail/patriot-radio-club/min-version.json",
+                    { cache: "no-store" }
+                  );
+                  if (!resp.ok) {
+                    return;
+                  }
+                  const data = await resp.json();
+                  const minVersion = data && data.minVersion;
+                  if (!minVersion) {
+                    return;
+                  }
+                  if (Services.vc.compare(Services.appinfo.version, minVersion) >= 0) {
+                    return;
+                  }
+                  const about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
+                  const box = about3Pane?.notificationBox;
+                  if (!box) {
+                    return;
+                  }
+                  box.appendNotification(
+                    "topdogsmail-update-required",
+                    {
+                      label:
+                        "A required update to Top Dogs Mail Client is available. Please update as soon as possible.",
+                      priority: box.PRIORITY_WARNING_HIGH,
+                    },
+                    [
+                      {
+                        label: "Update Now",
+                        callback: () => {
+                          openAboutDialog();
+                          return false;
+                        },
+                      },
+                    ]
+                  );
+                } catch (ex) {
+                  console.error("Top Dogs Mail update-gate check failed", ex);
+                }
+              })();
+            },
+          '@
+          Replace-Exact $msgJs $gateOld $gateNew
+          Write-Host "Applied mandatory update-gate patch to gMailInit._delayedStartup() in messenger.js"
+
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
         run: python mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
