@@ -35,11 +35,22 @@ LOG="$HOME/mar-signing/check-and-sign.log"
 TOKEN_FILE="$HOME/mar-signing/.github-token"
 PASS_FILE="$HOME/mar-signing/.nssdb-passphrase"
 STATE_FILE="$HOME/mar-signing/last-processed-run.txt"
+LOCK_FILE="$HOME/mar-signing/check-and-sign.lock"
 BUILD_SCRIPT="$HOME/build-complete-mar.sh"
 RELNOTES_SCRIPT="$HOME/generate-release-notes.sh"
 SIGNMAR="$HOME/mar-build/src/signmar"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ): $*" >> "$LOG"; }
+
+# Prevent overlapping runs: a full build can take longer than the 5-minute
+# cron interval, so without this a second invocation can start while the
+# first is still mid-build, racing it on the same run ID and log file
+# (found 2026-09-03 — see Top-Dogs-Mail-Project-Reference.md).
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+  log "Another check-and-sign.sh run is still in progress — skipping this tick."
+  exit 0
+fi
 
 log "=== check-and-sign run starting ==="
 
@@ -87,7 +98,10 @@ fi
 
 log "Found artifact: $ARTIFACT_NAME (id $ARTIFACT_ID)"
 
-WORK="$(mktemp -d /tmp/check-and-sign.XXXXXX)"
+WORK_BASE="$HOME/mar-signing/check-and-sign-tmp"
+mkdir -p "$WORK_BASE"
+find "$WORK_BASE" -maxdepth 1 -name 'work.*' -mmin +180 -exec rm -rf {} + 2>/dev/null || true
+WORK="$(mktemp -d "$WORK_BASE/work.XXXXXX")"
 cd "$WORK"
 
 curl -sL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
