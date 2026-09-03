@@ -532,8 +532,8 @@ jobs:
           Replace-Exact $corePrefs 'pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");' 'pref("app.support.baseURL", "https://topdogs.dev/?page_id=48");'
           Write-Host "Repointed Support link default directly in Thunderbird's core prefs file (all-thunderbird.js) - bypasses our branding-specific prefs file, which never loads for the same chrome-package-registration reason"
 
-          Replace-Exact $corePrefs 'pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");' 'pref("app.releaseNotesURL", "about:blank");'
-          Write-Host "Disabled Release Notes footer link (set to about:blank) - we have no release notes page to send it to; account-hub-footer.mjs's own JS hides the link entirely whenever this pref is exactly about:blank"
+          Replace-Exact $corePrefs 'pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");' 'pref("app.releaseNotesURL", "https://updates.topdogs.dev/mail/patriot-radio-club/release-notes.html");'
+          Write-Host "Repointed Release Notes footer link to the real, auto-generated release-notes page (updates.topdogs.dev) - previously disabled (about:blank) since there was no page to send it to; account-hub-footer.mjs shows the link whenever this pref isn't exactly about:blank"
 
           Replace-Exact $corePrefs 'pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");' 'pref("datareporting.policy.firstRunURL", "https://topdogs.dev/?page_id=46");'
           Write-Host "Repointed the first-run Privacy Notice tab (Bug 2, open and unlocated since 2026-08-25) to the Top Dogs Mail privacy policy page"
