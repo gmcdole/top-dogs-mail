@@ -45,7 +45,21 @@ if [ ! -f "$INSTALLER_EXE" ]; then
   exit 1
 fi
 
-WORK="$(mktemp -d /tmp/mar-build.XXXXXX)"
+WORK_BASE="$HOME/mar-build-tmp"
+mkdir -p "$WORK_BASE"
+
+# Prune stale work directories left behind by a previous failed run. This
+# script uses `set -euo pipefail`, so a failure partway through (e.g. the
+# final mv, or make_full_update.sh) skips the cleanup at the bottom and
+# leaves a several-hundred-MB extracted tree behind. Left unchecked across
+# repeated automated runs, that eventually starves disk space for every
+# later run too (see Top-Dogs-Mail-Project-Reference.md, "check-and-sign.sh
+# /tmp exhaustion" section, 2026-09-03). Keep anything from the last 3
+# hours in case a failure is worth inspecting by hand; anything older is
+# stale and gets removed automatically.
+find "$WORK_BASE" -maxdepth 1 -name 'mar-build.*' -mmin +180 -exec rm -rf {} + 2>/dev/null || true
+
+WORK="$(mktemp -d "$WORK_BASE/mar-build.XXXXXX")"
 echo "Working in $WORK"
 cd "$WORK"
 
@@ -94,16 +108,16 @@ echo "--- Building plain 'mar' tool (create-only, no NSS needed) ---"
 cd src
 gcc -c -DNO_SIGN_VERIFY -DMOZ_APP_VERSION="\"$VERSION\"" -DMAR_CHANNEL_ID="\"$MAR_CHANNEL_ID\"" \
   -Imodules/libmar/src -Iother-licenses/nsis/Contrib/CityHash/cityhash \
-  modules/libmar/tool/mar.c -o /tmp/mar_tool.o
+  modules/libmar/tool/mar.c -o "$WORK/mar_tool.o"
 gcc -c -DNO_SIGN_VERIFY -Imodules/libmar/src -Iother-licenses/nsis/Contrib/CityHash/cityhash \
-  modules/libmar/src/mar_create.c -o /tmp/mar_create.o
+  modules/libmar/src/mar_create.c -o "$WORK/mar_create.o"
 gcc -c -DNO_SIGN_VERIFY -Imodules/libmar/src -Iother-licenses/nsis/Contrib/CityHash/cityhash \
-  modules/libmar/src/mar_read.c -o /tmp/mar_read.o
+  modules/libmar/src/mar_read.c -o "$WORK/mar_read.o"
 gcc -c -DNO_SIGN_VERIFY -Imodules/libmar/src -Iother-licenses/nsis/Contrib/CityHash/cityhash \
-  modules/libmar/src/mar_extract.c -o /tmp/mar_extract.o
+  modules/libmar/src/mar_extract.c -o "$WORK/mar_extract.o"
 g++ -c -Iother-licenses/nsis/Contrib/CityHash/cityhash \
-  other-licenses/nsis/Contrib/CityHash/cityhash/city.cpp -o /tmp/mar_city.o
-g++ -o "$WORK/mar" /tmp/mar_tool.o /tmp/mar_create.o /tmp/mar_read.o /tmp/mar_extract.o /tmp/mar_city.o
+  other-licenses/nsis/Contrib/CityHash/cityhash/city.cpp -o "$WORK/mar_city.o"
+g++ -o "$WORK/mar" "$WORK/mar_tool.o" "$WORK/mar_create.o" "$WORK/mar_read.o" "$WORK/mar_extract.o" "$WORK/mar_city.o"
 cd "$WORK"
 echo "Built $WORK/mar:"
 ./mar 2>&1 | head -3 || true
