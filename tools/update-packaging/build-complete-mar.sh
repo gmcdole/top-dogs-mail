@@ -63,6 +63,13 @@ WORK="$(mktemp -d "$WORK_BASE/mar-build.XXXXXX")"
 echo "Working in $WORK"
 cd "$WORK"
 
+# gcc, xz, and other tools default to $TMPDIR (usually /tmp) for their own
+# intermediate files regardless of cwd. iffprov01's /tmp is a small,
+# quota-enforced tmpfs, so point everything at real disk instead.
+# (2026-09-03, same investigation as the WORK_BASE move above.)
+mkdir -p "$WORK/tmp"
+export TMPDIR="$WORK/tmp"
+
 echo "--- Extracting installer payload with 7z ---"
 7z x "$INSTALLER_EXE" -o./extracted -y > 7z-extract.log 2>&1
 if [ ! -d extracted/core ]; then
