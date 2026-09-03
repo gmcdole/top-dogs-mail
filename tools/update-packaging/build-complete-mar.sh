@@ -120,9 +120,29 @@ echo "--- Done ---"
 echo "Unsigned complete MAR: $OUTPUT_MAR"
 sha256sum "$OUTPUT_MAR"
 "$WORK/mar" -t "$OUTPUT_MAR" | wc -l
+
+# Surface the real BuildID from the extracted application.ini, needed for the
+# AUS update.xml manifest. Read here (before cleanup) rather than making a
+# caller do a second extraction of the same installer.
+# Added 2026-09-03 alongside the CI-to-sign automation work.
+if [ -f "$WORK/tree/application.ini" ]; then
+  REAL_BUILD_ID="$(grep -m1 '^BuildID=' "$WORK/tree/application.ini" | cut -d= -f2)"
+  REAL_VERSION="$(grep -m1 '^Version=' "$WORK/tree/application.ini" | cut -d= -f2)"
+  echo ""
+  echo "BUILD_ID=$REAL_BUILD_ID"
+  echo "INI_VERSION=$REAL_VERSION"
+  if [ -n "$REAL_VERSION" ] && [ "$REAL_VERSION" != "$VERSION" ]; then
+    echo "WARNING: version passed on the command line ($VERSION) does not match application.ini's own Version ($REAL_VERSION) — double check which is correct." >&2
+  fi
+else
+  echo "WARNING: tree/application.ini not found — could not read real BuildID." >&2
+fi
+
 echo ""
-echo "Next: sign it, e.g.:"
-echo "  ~/mar-build/src/signmar -d ~/mar-signing/nssdb -n patriotradioclub-release -n patriotradioclub-release-secondary -s \"$OUTPUT_MAR\" \"${OUTPUT_MAR%.mar}.signed.mar\""
+echo "Next: sign it with exactly ONE cert (never both primary and secondary at"
+echo "once — a MAR signed with 2 certs fails verification on every real client,"
+echo "see Top-Dogs-Mail-Project-Reference.md, \"HARD GATE proof\" section, 2026-09-03):"
+echo "  ~/mar-build/src/signmar -d ~/mar-signing/nssdb -n patriotradioclub-release -s \"$OUTPUT_MAR\" \"${OUTPUT_MAR%.mar}.signed.mar\""
 echo ""
 echo "Cleaning up working directory $WORK (the tree/ extraction and fetched source are disposable; only $OUTPUT_MAR matters going forward)"
 rm -rf "$WORK"
