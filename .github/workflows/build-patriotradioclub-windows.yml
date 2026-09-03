@@ -538,6 +538,23 @@ jobs:
           Replace-Exact $corePrefs 'pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");' 'pref("datareporting.policy.firstRunURL", "https://topdogs.dev/?page_id=46");'
           Write-Host "Repointed the first-run Privacy Notice tab (Bug 2, open and unlocated since 2026-08-25) to the Top Dogs Mail privacy policy page"
 
+          # Real update-check URL, found 2026-09-02: app.update.url is NOT a pref
+          # anymore (removed from all-thunderbird.js in upstream Bug 1568994/1630041,
+          # confirmed by its absence and the explicit "app.update.url was removed in
+          # Bug 1630041" comment in the real ESR153 all-thunderbird.js). The updater
+          # (toolkit/mozapps/update/UpdateService.sys.mjs) reads Services.appinfo.updateURL
+          # instead, which XRE populates from application.ini's own [AppUpdate] URL line -
+          # a build-time template at build/application.ini.in in the PLATFORM repo (not
+          # comm/), confirmed via real ESR153 source. Its default host comes from
+          # mail/moz.configure's `set_config("MOZ_APPUPDATE_HOST", "aus.thunderbird.net")`,
+          # but that only swaps the hostname - the template still appends Balrog-style
+          # dynamic path segments (%PRODUCT%/%VERSION%/%BUILD_ID%/.../%SYSTEM_CAPABILITIES%/...)
+          # that our static nginx file server on iffweb01 has no routing for. So this patches
+          # the whole URL line, not just the host, to our real flat static path.
+          $appUpdateIni = "build/application.ini.in"
+          Replace-Exact $appUpdateIni 'URL=https://@MOZ_APPUPDATE_HOST@/update/6/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%SYSTEM_CAPABILITIES%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml' 'URL=https://updates.topdogs.dev/mail/patriot-radio-club/update.xml'
+          Write-Host "Repointed the real update-check URL (application.ini's [AppUpdate] URL) to our own static update-file-serving endpoint - this is the actual mechanism Services.appinfo.updateURL reads, bypassing the removed app.update.url pref entirely"
+
       - name: Bootstrap build environment
         working-directory: ${{ runner.temp }}/source
         run: python mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
