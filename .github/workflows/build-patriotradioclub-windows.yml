@@ -612,10 +612,11 @@ jobs:
                     return;
                   }
                   const about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
-                  const box = about3Pane?.notificationBox;
-                  if (!box) {
+                  const container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  if (!container) {
                     return;
                   }
+                  const box = new about3Pane.MozElements.NotificationBox(el => container.append(el));
                   box.appendNotification(
                     "topdogsmail-update-required",
                     {
