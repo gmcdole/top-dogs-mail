@@ -366,6 +366,16 @@ jobs:
       - name: Report starting disk space
         run: Get-PSDrive -PSProvider FileSystem
 
+      - name: Enlarge Windows pagefile (fix for the "paging file is too small" OOM crash hit twice in Run #31, in dom/media/ipc)
+        uses: al-cheb/configure-pagefile-action@v1.4
+        with:
+          minimum-size: 16GB
+          maximum-size: 32GB
+          disk-root: "C:"
+
+      - name: Confirm new pagefile size took effect
+        run: Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage
+
       - name: Confirm base prerequisites are present
         run: |
           python --version
