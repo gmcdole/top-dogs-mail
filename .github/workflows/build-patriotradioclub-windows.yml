@@ -1,4 +1,4 @@
-﻿name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
+name: Build Top Dogs Mail (Patriot Radio Club branded, Windows)
 
 # Windows build. Run #1 (2026-08-22) failed at "Bootstrap build environment"
 # after 32s: mach requires Mozilla's own MozillaBuild toolchain pre-installed
@@ -611,8 +611,16 @@ jobs:
                   if (Services.vc.compare(Services.appinfo.version, minVersion) >= 0) {
                     return;
                   }
-                  const about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
-                  const container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  let about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
+                  let container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  // tabmail/about3Pane may not be ready yet this early in startup (this
+                  // fires immediately, fire-and-forget, right after extensions-late-startup).
+                  // Poll briefly rather than assuming it's ready on the first check.
+                  for (let attempt = 0; attempt < 10 && !container; attempt++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
+                    container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  }
                   if (!container) {
                     return;
                   }
