@@ -1,0 +1,350 @@
+name: Build Top Dogs Mail (Patriot Radio Club branded, Linux)
+
+# Linux build, created 2026-11-15 from the proven Windows workflow
+# (build-patriotradioclub-windows.yml at dce9ec6). The source-patch steps below are
+# copied unchanged from it (they run under PowerShell 7, which is preinstalled on
+# GitHub's ubuntu runners), so Linux gets the same branding, Account Hub fixes,
+# update-check URL, and mandatory update gate as the Windows build.
+# Windows-only parts are left out: MozillaBuild, pagefile, NSIS installer renames,
+# VC++ runtime DLLs, Windows Error Reporting.
+# Output: a generic .tar.xz (extract anywhere, run the topdogsmail binary inside;
+# no per-distro package). The July 2026 Linux build (2026-07-25) proved the
+# compile; this workflow adds the patches and the packaging + artifact steps it lacked.
+# MOZ_APP_PROFILE is deliberately left as stock Thunderbird, same as Windows.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Report machine specs and disk space
+        shell: bash
+        run: |
+          nproc
+          free -h
+          df -h
+
+      - name: Install base prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip git curl
+          python3 --version
+          git --version
+          pwsh --version
+
+      - name: Clone Firefox source (build platform)
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: git clone --depth 1 --branch esr153 https://github.com/mozilla-firefox/firefox.git source
+
+      - name: Clone Thunderbird source into comm/
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: git clone --depth 1 --branch esr153 https://github.com/thunderbird/thunderbird-desktop.git comm
+
+      - name: Copy real MAR-signing certificates into place
+        run: |
+          Copy-Item -Force -Path "certs/dep1.der" -Destination "${{ runner.temp }}/source/toolkit/mozapps/update/updater/dep1.der"
+          Copy-Item -Force -Path "certs/dep2.der" -Destination "${{ runner.temp }}/source/toolkit/mozapps/update/updater/dep2.der"
+
+      - name: Copy Patriot Radio Club branding into place
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub" | Out-Null
+          Copy-Item -Recurse -Force -Path "branding/mozilla-branding/patriotradioclub/*" -Destination "${{ runner.temp }}/source/comm/mail/branding/patriotradioclub/"
+
+      - name: Apply Top Dogs Mail app-identity rename (proven manually 2026-08-25 on the dedicated build VM)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            $content = Get-Content -Path $Path -Raw
+            if (-not $content.Contains($Old)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $Old"
+              exit 1
+            }
+            $content = $content.Replace($Old, $New)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_NAME", "thunderbird")' 'imply_option("MOZ_APP_NAME", "topdogsmail")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_BASENAME", "Thunderbird")' 'imply_option("MOZ_APP_BASENAME", "Top Dogs Mail")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_ID", "{3550f703-e582-4d05-9a08-453d09bdfdc6}")' 'imply_option("MOZ_APP_ID", "{eec8ce29-6914-4ca8-b125-312cd6a6dee8}")'
+          Replace-Exact "comm/mail/moz.configure" 'imply_option("MOZ_APP_VENDOR", "Mozilla")' 'imply_option("MOZ_APP_VENDOR", "Top Dogs Development")'
+          Write-Host "moz.configure identity rename applied (MOZ_APP_PROFILE deliberately left as stock Thunderbird - preserves an existing user's profile/accounts when this replaces a real Thunderbird install)"
+
+      - name: Apply Account Hub UI patches (remove Thundermail sign-in button, repoint Donate/Privacy Policy links, repoint Account Central donation banner, embed header logo, fix Support link default, fix Support footer link, disable Release Notes link, fix first-run Privacy Notice link)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            # Normalize line endings before comparing: run 19 failed on the first
+            # multi-line here-string match here (single-line matches in the
+            # app-identity-rename step above were unaffected) even though the
+            # source text was confirmed byte-identical outside the runner -
+            # thunderbird-desktop's .gitattributes forces "* -text" (pure LF,
+            # no normalization), so a CRLF introduced anywhere between this
+            # workflow file and the generated step script breaks an exact
+            # multi-line match. Normalizing both sides to LF makes the
+            # comparison robust regardless of where that CRLF was introduced.
+            $content = (Get-Content -Path $Path -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+            $OldNorm = ($Old -replace "`r`n", "`n") -replace "`r", "`n"
+            if (-not $content.Contains($OldNorm)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $OldNorm"
+              exit 1
+            }
+            $NewNorm = ($New -replace "`r`n", "`n") -replace "`r", "`n"
+            $content = $content.Replace($OldNorm, $NewNorm)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          $template = "comm/mail/components/accountcreation/templates/accountHubEmailAutoFormTemplate.inc.xhtml"
+          $thundermailBlock = @'
+            <div class="account-hub-thundermail-header" slot="middle-content">
+              <button class="account-hub-thundermail-button" type="button">
+                <img class="account-hub-thundermail-icon" src="" alt="" />
+                <span data-l10n-id="account-hub-thundermail-button"></span>
+              </button>
+              <div class="account-hub-thundermail-divider">
+                <span
+                  class="account-hub-thundermail-divider-text"
+                  data-l10n-id="account-hub-thundermail-divider-text"
+                ></span>
+              </div>
+            </div>
+          '@
+          Replace-Exact $template $thundermailBlock ""
+          Write-Host "Removed Sign in with Thundermail button from account hub email setup template"
+
+          $footer = "comm/mail/components/accountcreation/templates/accountHubFooterTemplate.inc.xhtml"
+          Replace-Exact $footer 'href="https://www.thunderbird.net/donate/?utm_source=thunderbird_account_hub&amp;utm_medium=referral&amp;utm_content=hub_footer"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
+          Write-Host "Repointed Donate footer link to Top Dogs Development Square checkout"
+
+          Replace-Exact $footer 'href="https://www.thunderbird.net/privacy/"' 'href="https://topdogs.dev/?page_id=46"'
+          Write-Host "Repointed Account Hub footer Privacy Policy link to Top Dogs Mail privacy policy page"
+
+          Replace-Exact $footer 'href="https://support.mozilla.org/products/thunderbird"' 'href="https://topdogs.dev/?page_id=48"'
+          Write-Host "Repointed Support footer link to Top Dogs Mail support page - ESR153 hardcodes this directly in the template with no JS/pref wiring at all (confirmed via real ESR153 source, 2026-09-01), unlike the app.support.baseURL pref patch below which an earlier pre-ESR153 account-hub-footer.mjs used to read at runtime"
+
+          $acctCentral = "comm/mailnews/base/content/msgAccountCentral.xhtml"
+          Replace-Exact $acctCentral 'href="https://www.thunderbird.net/donate/?utm_source=account_hub_tb_release&amp;utm_medium=referral&amp;utm_content=paragraph_text"' 'href="https://checkout.square.site/merchant/ML51RES27MWK5/checkout/NI2625HDAZNMQEF3WNOW772K"'
+          Write-Host "Repointed Account Central donation banner link to Top Dogs Development Square checkout"
+
+          # Root cause found 2026-08-30 via live Browser Console testing on a real install:
+          # EVERY chrome://branding/content/* resource (logo-gradient.svg, about-logo.png,
+          # aboutDialog.css, about-wordmark.svg) fails with "No chrome package registered
+          # for chrome://branding/content/...". Our custom --with-branding directory's own
+          # content jar.mn and pref/thunderbird-branding.js are both silently never
+          # registered at runtime, despite building without error and despite Mozilla's own
+          # build docs confirming --with-branding is "intentionally undocumented" (unofficial,
+          # unsupported territory). Rather than keep fighting that mechanism, both fixes below
+          # bypass it entirely using the same direct-source-patch pattern already proven
+          # reliable elsewhere in this file (moz.configure identity rename, etc).
+          $accountHubHeader = "comm/mail/components/accountcreation/templates/accountHubHeaderTemplate.inc.xhtml"
+          Replace-Exact $accountHubHeader 'src="chrome://branding/content/logo-gradient.svg"' 'src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1OTIiIGhlaWdodD0iNTkyIiB2aWV3Qm94PSIwIDAgNTkyIDU5MiI+CiAgPHJhZGlhbEdyYWRpZW50IGlkPSJncmFkaWVudCIgY3g9Ii41IiBjeT0iLjUiIHI9Ii41Ij4KICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0b3AtY29sb3I9IiNFNUMyMDAiLz4KICAgIDxzdG9wIG9mZnNldD0iNTAlIiBzdG9wLWNvbG9yPSIjQjIyMjM0Ii8+CiAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMzQzNCNkUiLz4KICA8L3JhZGlhbEdyYWRpZW50PgogIDxyZWN0IHdpZHRoPSI1OTIiIGhlaWdodD0iNTkyIiByeD0iOTAiIGZpbGw9InVybCgjZ3JhZGllbnQpIi8+CiAgPHRleHQgeD0iMjk2IiB5PSI0MDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiCiAgICAgICAgZm9udC1mYW1pbHk9Ikdlb3JnaWEsICdUaW1lcyBOZXcgUm9tYW4nLCBzZXJpZiIgZm9udC13ZWlnaHQ9ImJvbGQiCiAgICAgICAgZm9udC1zaXplPSIzMDAiIGZpbGw9IiNGRkZGRkYiPlREPC90ZXh0Pgo8L3N2Zz4K"'
+          Write-Host "Embedded Top Dogs Mail TD-monogram logo directly into the Account Hub header template as a data URI - no external chrome:// resource to fail to register"
+
+          $corePrefs = "comm/mail/app/profile/all-thunderbird.js"
+          Replace-Exact $corePrefs 'pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");' 'pref("app.support.baseURL", "https://topdogs.dev/?page_id=48");'
+          Write-Host "Repointed Support link default directly in Thunderbird's core prefs file (all-thunderbird.js) - bypasses our branding-specific prefs file, which never loads for the same chrome-package-registration reason"
+
+          Replace-Exact $corePrefs 'pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");' 'pref("app.releaseNotesURL", "https://updates.topdogs.dev/mail/patriot-radio-club/release-notes.html");'
+          Write-Host "Repointed Release Notes footer link to the real, auto-generated release-notes page (updates.topdogs.dev) - previously disabled (about:blank) since there was no page to send it to; account-hub-footer.mjs shows the link whenever this pref isn't exactly about:blank"
+
+          Replace-Exact $corePrefs 'pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");' 'pref("datareporting.policy.firstRunURL", "https://topdogs.dev/?page_id=46");'
+          Write-Host "Repointed the first-run Privacy Notice tab (Bug 2, open and unlocated since 2026-08-25) to the Top Dogs Mail privacy policy page"
+
+          # Real update-check URL, found 2026-09-02: app.update.url is NOT a pref
+          # anymore (removed from all-thunderbird.js in upstream Bug 1568994/1630041,
+          # confirmed by its absence and the explicit "app.update.url was removed in
+          # Bug 1630041" comment in the real ESR153 all-thunderbird.js). The updater
+          # (toolkit/mozapps/update/UpdateService.sys.mjs) reads Services.appinfo.updateURL
+          # instead, which XRE populates from application.ini's own [AppUpdate] URL line -
+          # a build-time template at build/application.ini.in in the PLATFORM repo (not
+          # comm/), confirmed via real ESR153 source. Its default host comes from
+          # mail/moz.configure's `set_config("MOZ_APPUPDATE_HOST", "aus.thunderbird.net")`,
+          # but that only swaps the hostname - the template still appends Balrog-style
+          # dynamic path segments (%PRODUCT%/%VERSION%/%BUILD_ID%/.../%SYSTEM_CAPABILITIES%/...)
+          # that our static nginx file server on iffweb01 has no routing for. So this patches
+          # the whole URL line, not just the host, to our real flat static path.
+          $appUpdateIni = "build/application.ini.in"
+          Replace-Exact $appUpdateIni 'URL=https://@MOZ_APPUPDATE_HOST@/update/6/%PRODUCT%/%VERSION%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%SYSTEM_CAPABILITIES%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/update.xml' 'URL=https://updates.topdogs.dev/mail/patriot-radio-club/update.xml'
+          Write-Host "Repointed the real update-check URL (application.ini's [AppUpdate] URL) to our own static update-file-serving endpoint - this is the actual mechanism Services.appinfo.updateURL reads, bypassing the removed app.update.url pref entirely"
+
+      - name: Apply mandatory update-gate patch (fetch min-version.json on every launch, soft-nag notification if below minimum, fails open on any error)
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          function Replace-Exact($Path, $Old, $New) {
+            $content = (Get-Content -Path $Path -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+            $OldNorm = ($Old -replace "`r`n", "`n") -replace "`r", "`n"
+            if (-not $content.Contains($OldNorm)) {
+              Write-Error "Expected string not found in $Path - upstream source may have changed since this step was written. Looking for: $OldNorm"
+              exit 1
+            }
+            $NewNorm = ($New -replace "`r`n", "`n") -replace "`r", "`n"
+            $content = $content.Replace($OldNorm, $NewNorm)
+            Set-Content -Path $Path -Value $content -NoNewline
+          }
+
+          $msgJs = "comm/mail/base/content/messenger.js"
+          $gateOld = @'
+                Services.obs.notifyObservers(window, "extensions-late-startup");
+              });
+            },
+          '@
+          $gateNew = @'
+                Services.obs.notifyObservers(window, "extensions-late-startup");
+              });
+
+              // Mandatory update gate (Top Dogs Mail, added 2026-09-03). Fire-and-forget:
+              // never awaited, never blocks startup. Any failure (offline, unreachable
+              // server, malformed response) fails open -- the member just doesn't see the
+              // nag this launch, per standing decision.
+              (async () => {
+                try {
+                  const resp = await fetch(
+                    "https://updates.topdogs.dev/mail/patriot-radio-club/min-version.json",
+                    { cache: "no-store" }
+                  );
+                  if (!resp.ok) {
+                    return;
+                  }
+                  const data = await resp.json();
+                  const minVersion = data && data.minVersion;
+                  if (!minVersion) {
+                    return;
+                  }
+                  if (Services.vc.compare(Services.appinfo.version, minVersion) >= 0) {
+                    return;
+                  }
+                  let about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
+                  let container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  // tabmail/about3Pane may not be ready yet this early in startup (this
+                  // fires immediately, fire-and-forget, right after extensions-late-startup).
+                  // Poll briefly rather than assuming it's ready on the first check.
+                  for (let attempt = 0; attempt < 10 && !container; attempt++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    about3Pane = document.getElementById("tabmail")?.currentAbout3Pane;
+                    container = about3Pane?.document?.getElementById("threadPaneNotificationBox");
+                  }
+                  if (!container) {
+                    return;
+                  }
+                  const box = new about3Pane.MozElements.NotificationBox(el => container.append(el));
+                  box.appendNotification(
+                    "topdogsmail-update-required",
+                    {
+                      label:
+                        "A required update to Top Dogs Mail Client is available. Please update as soon as possible.",
+                      priority: box.PRIORITY_WARNING_HIGH,
+                    },
+                    [
+                      {
+                        label: "Update Now",
+                        callback: () => {
+                          openAboutDialog();
+                          return false;
+                        },
+                      },
+                    ]
+                  );
+                } catch (ex) {
+                  console.error("Top Dogs Mail update-gate check failed", ex);
+                }
+              })();
+            },
+          '@
+          Replace-Exact $msgJs $gateOld $gateNew
+          Write-Host "Applied mandatory update-gate patch to gMailInit._delayedStartup() in messenger.js"
+
+      - name: Bootstrap build environment
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: python3 mach --no-interactive bootstrap --application-choice="Firefox for Desktop"
+
+      - name: Write mozconfig for Thunderbird (comm/mail) with Patriot Radio Club branding
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: |
+          echo 'ac_add_options --enable-project=comm/mail' > mozconfig
+          echo 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub' >> mozconfig
+          echo 'mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"' >> mozconfig
+          echo 'ac_add_options --enable-update-channel=topdogsmail-release' >> mozconfig
+          echo 'export MAR_CHANNEL_ID=topdogsmail-patriotradioclub-release' >> mozconfig
+          echo 'export ACCEPTED_MAR_CHANNEL_IDS=topdogsmail-patriotradioclub-release' >> mozconfig
+          cat mozconfig
+
+      - name: Vendor Rust dependencies
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: python3 mach tb-rust vendor
+
+      - name: Build (mach build)
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 mach build -v 2>&1 | tee "$RUNNER_TEMP/mach-build-full.log"
+
+      - name: Show tail of build log
+        if: always()
+        shell: bash
+        run: tail -n 200 "$RUNNER_TEMP/mach-build-full.log" || true
+
+      - name: Upload full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: top-dogs-mail-patriotradioclub-linux-build-log
+          path: ${{ runner.temp }}/mach-build-full.log
+          retention-days: 14
+
+      - name: Package (mach package)
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: python3 mach package
+
+      - name: Locate packaged tarball and write checksum
+        id: find_pkg
+        working-directory: ${{ runner.temp }}/source
+        shell: bash
+        run: |
+          echo "--- every archive under obj-*/dist (largest first) ---"
+          find obj-*/dist -maxdepth 2 \( -name '*.tar.xz' -o -name '*.tar.bz2' -o -name '*.tar.gz' \) -printf '%s bytes %p\n' | sort -rn
+          PKG=$(find obj-*/dist -maxdepth 2 -name '*.tar.xz' -printf '%s %p\n' | sort -rn | head -n 1 | cut -d' ' -f2-)
+          if [ -z "$PKG" ]; then
+            PKG=$(find obj-*/dist -maxdepth 2 -name '*.tar.bz2' -printf '%s %p\n' | sort -rn | head -n 1 | cut -d' ' -f2-)
+          fi
+          if [ -z "$PKG" ]; then
+            echo "No packaged tarball found - see the archive listing above and the Package step log."
+            exit 1
+          fi
+          echo "Found package: $PKG"
+          mkdir -p "$RUNNER_TEMP/linux-out"
+          cp "$PKG" "$RUNNER_TEMP/linux-out/"
+          (cd "$RUNNER_TEMP/linux-out" && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt && ls -l)
+          echo "pkg_dir=$RUNNER_TEMP/linux-out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux package as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: top-dogs-mail-patriotradioclub-linux-package
+          path: ${{ steps.find_pkg.outputs.pkg_dir }}
+          retention-days: 14
