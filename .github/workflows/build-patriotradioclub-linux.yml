@@ -45,6 +45,17 @@ jobs:
           free -h
           df -h
 
+      - name: Add 16 GB swap file (same fix that cured the Windows OOM in run #32: pagefile enlargement)
+        shell: bash
+        run: |
+          df -h /mnt /
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /mnt/build.swap || sudo dd if=/dev/zero of=/mnt/build.swap bs=1M count=16384
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -h
+
       - name: Install base prerequisites
         shell: bash
         run: |
@@ -297,6 +308,9 @@ jobs:
           echo 'ac_add_options --enable-project=comm/mail' > mozconfig
           echo 'ac_add_options --with-branding=comm/mail/branding/patriotradioclub' >> mozconfig
           echo 'mk_add_options MOZ_MAKE_FLAGS="--output-sync=target"' >> mozconfig
+          echo 'ac_add_options --disable-debug-symbols' >> mozconfig
+          echo 'ac_add_options --disable-tests' >> mozconfig
+          echo 'mk_add_options MOZ_PARALLEL_BUILD=3' >> mozconfig
           echo 'ac_add_options --enable-update-channel=topdogsmail-release' >> mozconfig
           echo 'export MAR_CHANNEL_ID=topdogsmail-patriotradioclub-release' >> mozconfig
           echo 'export ACCEPTED_MAR_CHANNEL_IDS=topdogsmail-patriotradioclub-release' >> mozconfig
@@ -312,7 +326,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 mach build -v 2>&1 | tee "$RUNNER_TEMP/mach-build-full.log"
+          # resource monitor: if the runner dies again, the last [resmon] line in the step log shows memory/disk at that moment
+          ( while true; do echo "[resmon] $(date -u +%T) $(free -m | awk 'NR==2{print "mem_used_MB="$3" avail_MB="$7}') disk_free=$(df -h --output=avail "$RUNNER_TEMP" | tail -1 | tr -d ' ')"; sleep 120; done ) &
+          python3 mach build 2>&1 | tee "$RUNNER_TEMP/mach-build-full.log"
 
       - name: Show tail of build log
         if: always()
