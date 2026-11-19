@@ -349,6 +349,10 @@ on:
 
 jobs:
   build:
+    environment: signing
+    permissions:
+      id-token: write
+      contents: read
     runs-on: windows-2022
     timeout-minutes: 300
     defaults:
@@ -875,6 +879,38 @@ jobs:
           }
           Write-Host "Found installer: $($installer.FullName) ($($installer.Length) bytes)"
           echo "installer_path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
+      # Windows code signing (added 2026-11-19, Software-Code-Signing-Project-Reference.md):
+      # signs the packaged setup.exe as International Freedom Foundation LLC with Azure
+      # Artifact Signing (account topdogs-signing, profile iff-public-trust). Login is OIDC
+      # through the Entra app topdogs-ci-signing - there is NO password or secret anywhere.
+      - name: Azure login (OIDC, no secret)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign installer (Azure Artifact Signing, International Freedom Foundation LLC)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ steps.find_installer.outputs.installer_path }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify installer signature
+        run: |
+          $sig = Get-AuthenticodeSignature -FilePath "${{ steps.find_installer.outputs.installer_path }}"
+          Write-Host "Status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { Write-Error "Installer signature is not Valid"; exit 1 }
+          if ($sig.SignerCertificate.Subject -notlike "*International Freedom Foundation LLC*") { Write-Error "Unexpected signer"; exit 1 }
+          if (-not $sig.TimeStamperCertificate) { Write-Error "Signature has no timestamp"; exit 1 }
 
       - name: Upload installer as a workflow artifact
         uses: actions/upload-artifact@v4
